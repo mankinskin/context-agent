@@ -1,0 +1,5 @@
+[net]
+# This template has no private Git dependency today, but a tool built from
+# it might gain one; this setting is harmless and generic either way, and
+# avoids libssh2 host-key/algorithm issues with private SSH-based deps.
+git-fetch-with-cli = true
