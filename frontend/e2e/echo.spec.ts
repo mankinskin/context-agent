@@ -1,12 +1,24 @@
 import { test, expect } from "@playwright/test";
 
-// Generic browser smoke: type a message, submit it to /api/echo through the
-// real UI, and confirm the echoed result renders. Generalized for any app
-// built from this template that keeps the same single-input echo flow;
-// replace this spec when the app grows real UI/endpoints.
-test("echoes a submitted message through the UI", async ({ page }) => {
+test("renders a rich weather response in the tiled editor", async ({ page }) => {
+  const initialSessions = await page.request.get("/api/sessions");
+  const initialSessionCount = (await initialSessions.json()).length;
+
   await page.goto("/");
-  await page.locator("input").fill("smoke-test");
-  await page.getByRole("button", { name: "Send to /api/echo" }).click();
-  await expect(page.getByText("Echoed: smoke-test")).toBeVisible();
+  await expect(page.getByRole("button", { name: "New session" })).toBeVisible();
+
+  await page.getByRole("textbox", { name: "Message" }).fill("How is the weather in Münster today?");
+  await page.getByRole("button", { name: /Send/ }).click({ force: true });
+
+  await expect(page.getByRole("heading", { name: "Weather in Münster" })).toBeVisible();
+  await expect(page.getByText(/feels like/i)).toBeVisible();
+  await expect(page.getByText(/Precipitation:/i)).toBeVisible();
+  await expect(page.getByText(/Wind:/i)).toBeVisible();
+  await expect(page.locator(".tool-call code", { hasText: "fetch_weather" })).toBeVisible();
+  await expect(page.locator(".message-stream .message")).toHaveCount(2);
+  await expect(page.locator(".editor-tabs .session-tab")).toHaveCount(initialSessionCount + 1);
+  await expect(page.locator(".workspace")).toHaveCSS("display", "grid");
+
+  await page.getByRole("button", { name: "New session" }).click({ force: true });
+  await expect(page.locator(".editor-tabs .session-tab")).toHaveCount(initialSessionCount + 2);
 });
