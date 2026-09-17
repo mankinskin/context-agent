@@ -228,7 +228,7 @@ async fn list_sessions(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<SessionSummary>>, (StatusCode, String)> {
     let sessions = state.sessions.lock().unwrap();
-    let summaries = sessions
+    let mut summaries = sessions
         .iter()
         .map(|(session_id, session)| SessionSummary {
             session_id: session_id.clone(),
@@ -242,7 +242,17 @@ async fn list_sessions(
                 .filter_map(|event| event.source_id.clone())
                 .last(),
         })
-        .collect();
+        .collect::<Vec<_>>();
+    summaries.sort_by_key(|session| {
+        std::cmp::Reverse(
+            session
+                .session_id
+                .rsplit('-')
+                .next()
+                .and_then(|suffix| suffix.parse::<u64>().ok())
+                .unwrap_or_default(),
+        )
+    });
     Ok(Json(summaries))
 }
 
@@ -754,19 +764,23 @@ mod tests {
     #[tokio::test]
     async fn list_sessions_returns_session_summaries() {
         let app = router("frontend/dist");
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/sessions")
-                    .header("content-type", "application/json")
-                    .body(Body::from(r#"{"mode":"chat","worktree_id":"wt-list"}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        for worktree_id in ["wt-list-1", "wt-list-2"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/sessions")
+                        .header("content-type", "application/json")
+                        .body(Body::from(format!(
+                            r#"{{"mode":"chat","worktree_id":"{worktree_id}"}}"#
+                        )))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
 
         let response = app
             .oneshot(
@@ -781,7 +795,9 @@ mod tests {
         let sessions: Vec<SessionSummary> =
             serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
                 .unwrap();
-        assert!(!sessions.is_empty());
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0].worktree_id, "wt-list-2");
+        assert_eq!(sessions[1].worktree_id, "wt-list-1");
     }
 
     #[test]

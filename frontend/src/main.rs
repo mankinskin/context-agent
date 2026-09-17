@@ -208,18 +208,28 @@ fn SessionTab(
     on_select: EventHandler<String>,
 ) -> Element {
     let session_id_for_button = session.session_id.clone();
-    let session_label = format!("{} · {}", session.worktree_id, &session_id_for_button[..8]);
+    let session_number = session_id_for_button
+        .rsplit('-')
+        .next()
+        .unwrap_or(&session_id_for_button);
+    let session_label = format!("Session {session_number}");
+    let session_title = format!("{} · {}", session.worktree_id, session_id_for_button);
     let key_id = session_id_for_button.clone();
     let click_id = session_id_for_button.clone();
     rsx! {
         button {
             key: "{key_id}",
             class: if is_active { "session-tab is-active" } else { "session-tab" },
+            title: "{session_title}",
+            aria_pressed: is_active,
             onclick: move |_| {
                 on_select.call(click_id.clone());
             },
             span { class: "status-dot" }
             span { class: "session-tab-label", "{session_label}" }
+            if is_active {
+                span { class: "active-indicator", "Active" }
+            }
             span { class: "session-count", "{session.event_count}" }
         }
     }
@@ -398,20 +408,30 @@ fn App() -> Element {
                     }
                 }
                 section { class: "editor-pane",
-                    div { class: "editor-tabs",
-                        for session in sessions.read().iter().cloned() {
-                            SessionTab {
-                                session: session.clone(),
-                                is_active: action_session_id() == Some(session.session_id.clone()),
-                                on_select: move |session_id: String| {
-                                    let mut selected = action_session_id.clone();
-                                    let mut result = action_result.clone();
-                                    async move {
-                                        selected.set(Some(session_id.clone()));
-                                        result.set(Some(load_timeline(&session_id).await));
-                                    }
-                                },
+                    div { class: "editor-tabbar",
+                        div { class: "editor-tabs",
+                            for session in sessions.read().iter().cloned() {
+                                SessionTab {
+                                    session: session.clone(),
+                                    is_active: action_session_id() == Some(session.session_id.clone()),
+                                    on_select: move |session_id: String| {
+                                        let mut selected = action_session_id.clone();
+                                        let mut result = action_result.clone();
+                                        async move {
+                                            selected.set(Some(session_id.clone()));
+                                            result.set(Some(load_timeline(&session_id).await));
+                                        }
+                                    },
+                                }
                             }
+                        }
+                        button {
+                            class: "parallel-session-button",
+                            aria_label: "Create parallel session",
+                            title: "Create a parallel session",
+                            onclick: create_new_session,
+                            span { class: "parallel-session-icon", "+" }
+                            span { "Parallel session" }
                         }
                     }
                     div { class: "conversation-scroll",
