@@ -8,7 +8,7 @@ set -euo pipefail
 # which this template does not have.
 IMAGE="template:local"
 CONTAINER_NAME="template-local"
-PORT="${PORT:-8080}"
+PORT="${PORT:-8081}"
 BASE_URL="http://127.0.0.1:${PORT}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
