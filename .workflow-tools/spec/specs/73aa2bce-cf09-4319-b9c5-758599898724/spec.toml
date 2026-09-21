@@ -1,0 +1,10 @@
+id = "73aa2bce-cf09-4319-b9c5-758599898724"
+created_at = "2026-09-13T15:31:03.165326300+00:00"
+title = "Context Agent autonomous client product contract"
+state = "draft"
+component = "context-agent"
+related_specs = ["6f286eee-115b-4476-a6fc-9bd6796b5f3f", "aff42efb-422b-4abc-8a6c-cd176a3d0d5d", "39983ddf-1f7e-4081-a060-6b8258eb4c41", "aa769a27-2721-4b9d-880c-5c4e2f8136a7", "7c9757a7-739f-4dfe-a4de-26f187f3b5aa", "88413517-1d93-4582-8328-71a417dde3a1", "a9b7ef39-ace4-4a12-a171-80f54548fc65"]
+scope = "internal"
+slug = "context-agent/autonomous-client"
+ticket_ids = ["0f4b3c5b-c5e9-45c4-968c-a8878f359de8", "3dd84de0-474a-4797-ba83-787c907ae55b", "61f78a57-6896-4ad7-9daa-0e9e805aa397", "445a2d76-5795-4d7a-aec8-d1536ec61416", "8d0f0a2f-969d-48d7-a5f7-8a6ee9a90284", "8b78c940-7c63-412b-8d4c-051a32f573f9", "1ef56eb5-a957-45a0-981b-83acda2f9d89", "1e24734a-189b-4c66-af68-277c9f224687", "f1553f84-cdbe-4ff1-9d2a-4380b17bcc5f", "b32bf927-cd98-4bef-8b8b-9e5883a77fda", "d3335184-5abc-4069-868e-777432c9d33b", "be1ed61e-f163-461e-9e36-acdf059a16b9"]
+type = "specification"

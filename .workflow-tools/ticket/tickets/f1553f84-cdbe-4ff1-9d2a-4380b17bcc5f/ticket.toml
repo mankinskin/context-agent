@@ -1,0 +1,11 @@
+id = "f1553f84-cdbe-4ff1-9d2a-4380b17bcc5f"
+created_at = "2026-09-14T14:08:40.703541700+00:00"
+title = "[context-agent] CA-04 credit telemetry projection"
+state = "done"
+depends_on = ["1e24734a-189b-4c66-af68-277c9f224687", "1ef56eb5-a957-45a0-981b-83acda2f9d89"]
+effort = "1600"
+parts = [{ id = "53cda80e-3d64-4176-9bcc-4f9fc09d4834", kind = "objective", path = "parts/53cda80e-3d64-4176-9bcc-4f9fc09d4834.md", frozen = true, created_at = "2026-09-16T23:15:57.502778800Z" }, { id = "ee4d9b5d-c2a5-4e3f-84d2-dc00e08fdaa5", kind = "requirements", path = "parts/ee4d9b5d-c2a5-4e3f-84d2-dc00e08fdaa5.md", frozen = true, created_at = "2026-09-16T23:15:57.503036800Z" }, { id = "6abb8102-86e3-4611-8f09-d14fe18aa722", kind = "design", path = "parts/6abb8102-86e3-4611-8f09-d14fe18aa722.md", frozen = true, created_at = "2026-09-16T23:15:57.503337Z" }, { id = "54975018-5e90-49a7-8b89-a1d08f80dc33", kind = "examples", path = "parts/54975018-5e90-49a7-8b89-a1d08f80dc33.md", frozen = true, created_at = "2026-09-16T23:15:57.503531500Z" }, { id = "50d94336-2359-4f92-88a1-e1f668cce988", kind = "acceptance_criteria", path = "parts/50d94336-2359-4f92-88a1-e1f668cce988.md", frozen = true, created_at = "2026-09-16T23:15:57.503703500Z" }]
+phase = "2"
+plan_revision = 1
+type = "task"
+component = "context-agent"

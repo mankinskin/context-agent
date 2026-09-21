@@ -1,0 +1,11 @@
+id = "be1ed61e-f163-461e-9e36-acdf059a16b9"
+created_at = "2026-09-14T14:09:14.663892+00:00"
+title = "[context-agent] CA-07 durable session reconnect"
+state = "done"
+depends_on = ["8b78c940-7c63-412b-8d4c-051a32f573f9"]
+effort = "1800"
+parts = [{ id = "f9bba2f5-42cd-4ca4-960d-7d910069c7f9", kind = "objective", path = "parts/f9bba2f5-42cd-4ca4-960d-7d910069c7f9.md", frozen = true, created_at = "2026-09-16T23:16:20.261920700Z" }, { id = "91a1e397-e1aa-4523-86b5-2bfa15204f6e", kind = "requirements", path = "parts/91a1e397-e1aa-4523-86b5-2bfa15204f6e.md", frozen = true, created_at = "2026-09-16T23:16:20.262218800Z" }, { id = "580e7992-cfd3-4313-a97f-63f703f60b5d", kind = "design", path = "parts/580e7992-cfd3-4313-a97f-63f703f60b5d.md", frozen = true, created_at = "2026-09-16T23:16:20.262516500Z" }, { id = "5d7899bc-1438-4ab4-9fe2-39278f98c644", kind = "examples", path = "parts/5d7899bc-1438-4ab4-9fe2-39278f98c644.md", frozen = true, created_at = "2026-09-16T23:16:20.262664700Z" }, { id = "f819e53f-7593-4243-8fda-53ee7803f269", kind = "acceptance_criteria", path = "parts/f819e53f-7593-4243-8fda-53ee7803f269.md", frozen = true, created_at = "2026-09-16T23:16:20.262894200Z" }]
+phase = "2"
+plan_revision = 1
+type = "task"
+component = "context-agent"
