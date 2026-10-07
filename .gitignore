@@ -1,3 +1,10 @@
 /target
 /frontend/dist
 .env
+
+# Raw workstation telemetry; curated reports remain trackable.
+**/.feedback/entries/
+**/.workflow-tools/feedback/entries/
+**/.test/**/executions/
+**/.workflow-tools/test/**/executions/
+scan_fingerprints.json
