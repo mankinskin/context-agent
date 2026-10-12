@@ -1,0 +1,258 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { test } from "node:test";
+
+const runnerPath = fileURLToPath(new URL("./e2e-runner.mjs", import.meta.url));
+const runner = () => import("./e2e-runner.mjs");
+
+async function fixture(t) {
+  const root = await mkdtemp(join(tmpdir(), "context-agent-runner-unit-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  return root;
+}
+
+async function failingHealthServer(t) {
+  const server = createServer((_request, response) => {
+    response.writeHead(503);
+    response.end("not ready");
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  return { server, port: server.address().port };
+}
+
+test("help exposes the owned-runner interface without starting services", () => {
+  const result = spawnSync(process.execPath, [runnerPath, "--help"], {
+    encoding: "utf8",
+    timeout: 3000,
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /--lane/);
+  assert.match(result.stdout, /--scenario/);
+  assert.match(result.stdout, /--artifact-root/);
+  assert.match(result.stdout, /--budget-ledger/);
+  assert.match(result.stdout, /--verify-artifacts/);
+});
+
+for (const args of [
+  ["--lane", "invalid"],
+  ["--lane", "offline", "--scenario", "not-implemented"],
+  ["--unexpected-flag"],
+]) {
+  test(`invalid arguments fail before builds: ${args.join(" ")}`, () => {
+    const result = spawnSync(process.execPath, [runnerPath, ...args], {
+      encoding: "utf8",
+      timeout: 3000,
+    });
+    assert.ifError(result.error);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /invalid|unknown|unsupported|unrecognized/i);
+  });
+}
+
+test("an occupied loopback port fails without stopping its owner", async (t) => {
+  const { port } = await failingHealthServer(t);
+  const { ensurePortAvailable } = await runner();
+  await assert.rejects(ensurePortAvailable(port), { code: "PORT_IN_USE" });
+  const response = await fetch(`http://127.0.0.1:${port}/health`);
+  assert.equal(response.status, 503);
+});
+
+test("readiness has a terminal deadline instead of waiting indefinitely", async (t) => {
+  const { port } = await failingHealthServer(t);
+  const { waitForReady } = await runner();
+  const start = performance.now();
+  await assert.rejects(
+    waitForReady(`http://127.0.0.1:${port}`, { timeoutMs: 150 }),
+    { code: "READINESS_TIMEOUT" },
+  );
+  assert.ok(performance.now() - start < 2000, "readiness must stop promptly");
+});
+
+test("timeout cancels and joins the owned process while retaining evidence", async (t) => {
+  const root = await fixture(t);
+  const ledger = join(root, "live-budget.json");
+  const retainedLedger = '{"reserved":7,"sent":3}\n';
+  await writeFile(ledger, retainedLedger);
+  const { createOwnedRun } = await runner();
+  const run = await createOwnedRun({
+    artifactRoot: root,
+    budgetLedger: ledger,
+    runId: randomUUID(),
+    lane: "offline",
+    scenario: "baseline",
+  });
+  const pidFile = join(run.fixtureRoot, "owned.pid");
+  let cleanup;
+  try {
+    await writeFile(join(run.runRoot, "retained.txt"), "failure evidence");
+    await assert.rejects(
+      run.spawn(
+        process.execPath,
+        ["-e", "require('fs').writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 1000)", pidFile],
+        { timeoutMs: 1000 },
+      ),
+      { code: "PROCESS_TIMEOUT" },
+    );
+    const pid = Number(await readFile(pidFile, "utf8"));
+    assert.ok(Number.isSafeInteger(pid) && pid > 0);
+    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+  } finally {
+    cleanup = await run.cleanup();
+  }
+  assert.equal(cleanup.remaining_resource_count, 0);
+  assert.equal(await readFile(ledger, "utf8"), retainedLedger);
+  assert.equal(await readFile(join(run.runRoot, "retained.txt"), "utf8"), "failure evidence");
+  await assert.rejects(stat(run.fixtureRoot), { code: "ENOENT" });
+  const persistedCleanup = JSON.parse(await readFile(join(run.runRoot, "cleanup.json"), "utf8"));
+  assert.equal(persistedCleanup.remaining_resource_count, 0);
+});
+
+test("browser and tool children do not inherit provider credentials", async (t) => {
+  const root = await fixture(t);
+  const ledger = join(root, "live-budget.json");
+  await writeFile(ledger, '{"reserved":0,"sent":0}\n');
+  const { createOwnedRun } = await runner();
+  const run = await createOwnedRun({
+    artifactRoot: root,
+    budgetLedger: ledger,
+    runId: randomUUID(),
+    lane: "offline",
+    scenario: "baseline",
+  });
+
+  try {
+    const result = await run.spawn(
+      process.execPath,
+      ["-e", "console.log(['GITHUB_COPILOT_TOKEN','COPILOT_API_KEY','GITHUB_TOKEN','GH_TOKEN'].some(key => key in process.env))"],
+      {
+        timeoutMs: 3000,
+        env: {
+          GITHUB_COPILOT_TOKEN: "synthetic-credential-sentinel",
+          COPILOT_API_KEY: "synthetic-credential-sentinel",
+          GITHUB_TOKEN: "synthetic-credential-sentinel",
+          GH_TOKEN: "synthetic-credential-sentinel",
+        },
+      },
+    );
+    assert.equal(result.stdout.trim(), "false");
+  } finally {
+    await run.cleanup();
+  }
+});
+
+test("artifact verification rejects an empty evidence root", async (t) => {
+    const root = await fixture(t);
+    const result = spawnSync(process.execPath, [runnerPath, "--verify-artifacts", root], {
+      encoding: "utf8",
+      timeout: 3000,
+    });
+    assert.ifError(result.error);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /artifact|evidence|empty|missing/i);
+  });
+
+  test("artifact verification rejects a failed run rather than checking file presence", async (t) => {
+    const root = await fixture(t);
+    const ledger = join(root, "live-budget.json");
+    await writeFile(ledger, '{"reserved":0,"sent":0}\n');
+    const { createOwnedRun } = await runner();
+    const run = await createOwnedRun({
+      artifactRoot: root,
+      budgetLedger: ledger,
+      runId: randomUUID(),
+      lane: "offline",
+      scenario: "baseline",
+    });
+    run.manifest.outcome = "failed";
+    await run.persistManifest();
+    await writeFile(join(run.runRoot, "assertions.json"), '[{"passed":false}]\n');
+    await run.event({ kind: "failed", sequence: 1 });
+    await run.cleanup();
+    const result = spawnSync(process.execPath, [runnerPath, "--verify-artifacts", run.runRoot], {
+      encoding: "utf8",
+      timeout: 3000,
+    });
+    assert.ifError(result.error);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /artifact|evidence|failed|missing/i);
+  });
+
+  test("success labels cannot substitute for build identity and browser artifacts", async (t) => {
+    const root = await fixture(t);
+    const ledger = join(root, "live-budget.json");
+    await writeFile(ledger, '{"reserved":0,"sent":0}\n');
+    const { createOwnedRun } = await runner();
+    const run = await createOwnedRun({
+      artifactRoot: root,
+      budgetLedger: ledger,
+      runId: randomUUID(),
+      lane: "offline",
+      scenario: "baseline",
+    });
+    run.manifest.outcome = "passed";
+    await run.persistManifest();
+    await writeFile(join(run.runRoot, "assertions.json"), '[{"passed":true}]\n');
+    await run.event({ kind: "passed", sequence: 1 });
+    await mkdir(join(run.runRoot, "browser"), { recursive: true });
+    await run.cleanup();
+    const result = spawnSync(process.execPath, [runnerPath, "--verify-artifacts", run.runRoot], {
+      encoding: "utf8",
+      timeout: 3000,
+    });
+    assert.ifError(result.error);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /artifact|evidence|identity|missing/i);
+  });
+
+test("cleanup observes service descendants and preserves exited process history", async (t) => {
+  const root = await fixture(t);
+  const ledger = join(root, "live-budget.json");
+  await writeFile(ledger, '{"reserved":7,"sent":3}\n');
+  const { createOwnedRun } = await runner();
+  const run = await createOwnedRun({ artifactRoot: root, budgetLedger: ledger, runId: randomUUID(), lane: "offline", scenario: "baseline" });
+  const descendantFile = join(run.fixtureRoot, "descendant.pid");
+  try {
+    await run.spawn(process.execPath, ["-e", "console.log('ordinary command')"]);
+    await assert.rejects(run.spawn(process.execPath, ["-e",
+      "const c=require('child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'}); require('fs').writeFileSync(process.argv[1],String(c.pid)); setInterval(()=>{},1000)", descendantFile],
+    { timeoutMs: 1000 }), { code: "PROCESS_TIMEOUT" });
+    const pid = Number(await readFile(descendantFile, "utf8"));
+    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+    const cleanup = await run.cleanup();
+    assert.equal(cleanup.owned_resources.length, 2);
+    assert.ok(cleanup.owned_resources.every((entry) => entry.closed && entry.absent));
+    if (process.platform === "win32") assert.ok(cleanup.owned_resources[1].cancelled_tree_pids.includes(pid));
+    const events = (await readFile(join(run.runRoot, "events.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
+    assert.ok(events.every((entry, index) => entry.sequence === index && entry.elapsed_ms >= (events[index - 1]?.elapsed_ms ?? 0)));
+  } finally { await run.cleanup(); }
+});
+
+test("spawn failures remain explicit and logs redact synthetic credentials", async (t) => {
+  const root = await fixture(t);
+  const ledger = join(root, "live-budget.json");
+  await writeFile(ledger, '{"reserved":0,"sent":0}\n');
+  const { createOwnedRun } = await runner();
+  const run = await createOwnedRun({ artifactRoot: root, budgetLedger: ledger, runId: randomUUID(), lane: "offline", scenario: "baseline" });
+  try {
+    await assert.rejects(run.spawn("missing-workflow-executable", []), { code: "ENOENT" });
+    const result = await run.spawn(process.execPath, ["-e", "console.log('Bearer synthetic-credential-sentinel'); console.error('synthetic-credential-sentinel')"]);
+    assert.doesNotMatch(result.stdout + result.stderr, /synthetic-credential-sentinel/);
+    const cleanup = await run.cleanup();
+    for (const entry of cleanup.owned_resources) {
+      assert.doesNotMatch(await readFile(join(run.runRoot, entry.log_path), "utf8"), /synthetic-credential-sentinel/);
+    }
+    assert.doesNotMatch(await readFile(join(run.runRoot, "cleanup.json"), "utf8"), /synthetic-credential-sentinel/);
+    assert.doesNotMatch(await readFile(join(run.runRoot, "events.jsonl"), "utf8"), /synthetic-credential-sentinel/);
+  } finally { await run.cleanup(); }
+});

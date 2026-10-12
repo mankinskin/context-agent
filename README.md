@@ -47,6 +47,51 @@ A standalone clone of this repo does not include that dossier.
 
 See [USAGE.md](./USAGE.md) for how to extend this into a real application.
 
+## Owned offline browser baseline
+
+The credential-free owned runner builds the frontend, starts an isolated
+backend on a free loopback port, provisions synthetic external fixtures, and
+runs only `frontend/e2e/baseline.spec.ts`. It never uses the ambient server
+or the weather/provider path. Preserve the artifact root and ledger between
+runs:
+
+```sh
+node scripts/e2e-runner.mjs --lane offline --scenario baseline \
+  --artifact-root <retained-artifact-root> --budget-ledger <retained-artifact-root>/live-budget.json
+```
+
+`--help` documents the complete interface. Live and future scenarios fail
+explicitly until they have an owned implementation.
+
+The route owner initializes the cumulative ledger once before the first run;
+the runner requires the existing ledger and never creates or resets the
+budget. Offline runs retain before/after ledger snapshots and require identical
+bytes, even when earlier live runs have already spent reservations.
+
+Each UUID directory retains the built executable and complete static assets,
+served-byte hashes, browser JSON result, trace, desktop/narrow screenshots,
+sequenced events, bounded redacted logs and observed cleanup records. The
+backend runs from that retained build, so a later rebuild does not invalidate
+earlier evidence. Cleanup preserves the directory and ledger, deletes only
+the run's fixtures and cancels/joins only recorded process trees. Historical
+process records include exit timestamps because operating systems reuse PIDs.
+
+Builds have independent 15-minute ceilings. The offline scenario starts after
+builds, has a 60-second ceiling and reserves its final 10 seconds for cleanup;
+readiness is capped at 30 seconds within that budget. A failed build,
+readiness, browser flow or cleanup retains failed evidence rather than
+success-shaped assertions. To check a retained run without starting services:
+
+```sh
+node scripts/e2e-runner.mjs --verify-artifacts <retained-artifact-root>/<run-uuid>
+node --test scripts/e2e-runner.test.mjs
+```
+
+The verifier checks actual result counts, artifact hashes, process/event
+correspondence and ledger snapshots, not just passing labels or file presence.
+The baseline does not select the optional live-weather test; running the
+existing Playwright suite directly still includes that test.
+
 ## Local build (no Docker)
 
 ```sh
