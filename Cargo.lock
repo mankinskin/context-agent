@@ -7734,7 +7734,7 @@ dependencies = [
 [[package]]
 name = "session-api"
 version = "0.1.0"
-source = "git+https://github.com/mankinskin/session?rev=922f9aabd13366ad048830856c970953fadca719#922f9aabd13366ad048830856c970953fadca719"
+source = "git+https://github.com/mankinskin/session?branch=main#922f9aabd13366ad048830856c970953fadca719"
 dependencies = [
  "chrono",
  "feedback-api",
