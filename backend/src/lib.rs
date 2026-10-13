@@ -4,21 +4,30 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+#[cfg(not(test))]
+use agent_builder::{AgentExecutor, AgentRequest, AgentTemplate, Config, RigAgentExecutor};
 use serde::{Deserialize, Serialize};
+use session_api::{
+    SessionMetadata, SessionRecord, SessionRole, SessionStoreConfig, SessionStorePlan,
+    SessionTurn, SessionTurnEventMeta,
+};
 use std::{
     collections::HashMap,
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 use tower_http::services::{ServeDir, ServeFile};
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct AppState {
     sessions: Arc<Mutex<HashMap<String, Session>>>,
+    store: SessionStoreConfig,
 }
 
 #[derive(Clone)]
 struct Session {
     worktree_id: String,
+    created_at: chrono::DateTime<chrono::Utc>,
     events: Vec<TimelineEvent>,
     usage: Usage,
 }
@@ -138,6 +147,8 @@ pub struct SessionSummary {
     pub worktree_id: String,
     pub event_count: usize,
     pub latest_message: Option<String>,
+    #[serde(skip_serializing, skip_deserializing, default = "chrono::Utc::now")]
+    created_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -199,8 +210,25 @@ pub struct LifecycleResponse {
 }
 
 /// Builds the Context Agent API and same-origin static frontend service.
+///
+/// `SESSION_STORE_ROOT` selects the native session-api store.  It is explicit
+/// for the browser runner and defaults to a local `.session` store for manual
+/// development.
 pub fn router(static_dir: &str) -> Router {
-    let state = AppState::default();
+    #[cfg(test)]
+    let store_root = std::env::temp_dir().join(format!("context-agent-{}", uuid::Uuid::new_v4()));
+    #[cfg(not(test))]
+    let store_root = std::env::var_os("SESSION_STORE_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(".session"));
+    router_with_store(static_dir, store_root)
+}
+
+pub fn router_with_store(static_dir: &str, store_root: PathBuf) -> Router {
+    let state = AppState {
+        sessions: Arc::new(Mutex::new(HashMap::new())),
+        store: SessionStoreConfig::new(store_root),
+    };
     let serve_dir = ServeDir::new(static_dir)
         .not_found_service(ServeFile::new(format!("{static_dir}/index.html")));
     Router::new()
@@ -227,7 +255,8 @@ async fn health() -> &'static str {
 async fn list_sessions(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<SessionSummary>>, (StatusCode, String)> {
-    let sessions = state.sessions.lock().unwrap();
+    hydrate_sessions(&state)?;
+    let sessions = state.sessions.lock().map_err(lock_error)?;
     let mut summaries = sessions
         .iter()
         .map(|(session_id, session)| SessionSummary {
@@ -238,21 +267,14 @@ async fn list_sessions(
             latest_message: session
                 .events
                 .iter()
+                .rev()
                 .filter(|event| event.evidence_kind == EvidenceKind::ChatMessage)
                 .filter_map(|event| event.source_id.clone())
-                .last(),
+                .next(),
+            created_at: session.created_at,
         })
         .collect::<Vec<_>>();
-    summaries.sort_by_key(|session| {
-        std::cmp::Reverse(
-            session
-                .session_id
-                .rsplit('-')
-                .next()
-                .and_then(|suffix| suffix.parse::<u64>().ok())
-                .unwrap_or_default(),
-        )
-    });
+    summaries.sort_by_key(|summary| std::cmp::Reverse(summary.created_at));
     Ok(Json(summaries))
 }
 
@@ -266,14 +288,17 @@ async fn create_session(
             "worktree_id is required".to_string(),
         ));
     }
-    let session_id = next_id("session");
-    state.sessions.lock().unwrap().insert(
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let session = Session {
+        worktree_id: request.worktree_id,
+        created_at: chrono::Utc::now(),
+        events: Vec::new(),
+        usage: Usage::default(),
+    };
+    persist_session(&state.store, &session_id, &session)?;
+    state.sessions.lock().map_err(lock_error)?.insert(
         session_id.clone(),
-        Session {
-            worktree_id: request.worktree_id,
-            events: Vec::new(),
-            usage: Usage::default(),
-        },
+        session,
     );
     Ok(Json(CreateSessionResponse {
         session_id,
@@ -285,7 +310,8 @@ async fn get_timeline(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> Result<Json<TimelineResponse>, (StatusCode, String)> {
-    let sessions = state.sessions.lock().unwrap();
+    hydrate_sessions(&state)?;
+    let sessions = state.sessions.lock().map_err(lock_error)?;
     let session = sessions
         .get(&session_id)
         .ok_or((StatusCode::NOT_FOUND, "session not found".to_string()))?;
@@ -300,7 +326,8 @@ async fn create_message(
     Path(session_id): Path<String>,
     Json(request): Json<MessageRequest>,
 ) -> Result<Json<MessageResponse>, (StatusCode, String)> {
-    if !state.sessions.lock().unwrap().contains_key(&session_id) {
+    hydrate_sessions(&state)?;
+    if !state.sessions.lock().map_err(lock_error)?.contains_key(&session_id) {
         return Err((StatusCode::NOT_FOUND, "session not found".to_string()));
     }
     let prompt_assembly_id = next_id("prompt");
@@ -320,16 +347,25 @@ async fn create_message(
         })?;
         weather_message(&observation)
     } else {
-        ConversationMessage {
-            role: "assistant".to_string(),
-            blocks: vec![RichTextBlock::Paragraph {
-                text: format!("Model response: {}", redact_content(&request.content)),
-            }],
-            tool_calls: Vec::new(),
+        #[cfg(test)]
+        {
+            // Unit tests use an explicit in-process executor; production
+            // never fabricates a model response while offline.
+            ConversationMessage {
+                role: "assistant".to_string(),
+                blocks: vec![RichTextBlock::Paragraph {
+                    text: format!("Test executor response: {}", redact_content(&request.content)),
+                }],
+                tool_calls: Vec::new(),
+            }
+        }
+        #[cfg(not(test))]
+        {
+            live_agent_response(&request.content).await?
         }
     };
     let model_response_text = message_plain_text(&assistant_message);
-    let mut sessions = state.sessions.lock().unwrap();
+    let mut sessions = state.sessions.lock().map_err(lock_error)?;
     let session = sessions
         .get_mut(&session_id)
         .ok_or((StatusCode::NOT_FOUND, "session not found".to_string()))?;
@@ -395,6 +431,7 @@ async fn create_message(
         Vec::new(),
         Some(assistant_message.clone()),
     );
+    persist_session(&state.store, &session_id, session)?;
     Ok(Json(MessageResponse {
         message_id: request.message_id,
         prompt_assembly_id,
@@ -410,7 +447,8 @@ async fn add_evidence(
     Path(session_id): Path<String>,
     Json(request): Json<EvidenceRequest>,
 ) -> Result<Json<TimelineEvent>, (StatusCode, String)> {
-    let mut sessions = state.sessions.lock().unwrap();
+    hydrate_sessions(&state)?;
+    let mut sessions = state.sessions.lock().map_err(lock_error)?;
     let session = sessions
         .get_mut(&session_id)
         .ok_or((StatusCode::NOT_FOUND, "session not found".to_string()))?;
@@ -431,6 +469,7 @@ async fn add_evidence(
         message: None,
     };
     session.events.push(event.clone());
+    persist_session(&state.store, &session_id, session)?;
     Ok(Json(event))
 }
 
@@ -438,7 +477,8 @@ async fn get_credits(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> Result<Json<CreditUsage>, (StatusCode, String)> {
-    let sessions = state.sessions.lock().unwrap();
+    hydrate_sessions(&state)?;
+    let sessions = state.sessions.lock().map_err(lock_error)?;
     let session = sessions
         .get(&session_id)
         .ok_or((StatusCode::NOT_FOUND, "session not found".to_string()))?;
@@ -458,6 +498,194 @@ async fn get_credits(
         known_cost: None,
         missing_telemetry: missing,
     }))
+}
+
+fn lock_error<T>(_: std::sync::PoisonError<T>) -> (StatusCode, String) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "session_state_unavailable".to_string(),
+    )
+}
+
+/// Rebuild the in-process read model solely from the durable native store.
+/// The JSON in `SessionTurn::content` is an application event envelope; the
+/// native turn metadata holds the event and parent identity used by tooling.
+fn hydrate_sessions(state: &AppState) -> Result<(), (StatusCode, String)> {
+    let records = state
+        .store
+        .query_sessions(&session_api::SessionQuery::default())
+        .map_err(store_error)?;
+    let mut sessions = state.sessions.lock().map_err(lock_error)?;
+    for record in records.sessions {
+        let events = record
+            .turns
+            .iter()
+            .filter_map(|turn| serde_json::from_str::<TimelineEvent>(&turn.content).ok())
+            .collect();
+        sessions.insert(
+            record.session_id,
+            Session {
+                worktree_id: record
+                    .metadata
+                    .agent_id
+                    .as_deref()
+                    .and_then(|value| value.strip_prefix("context-agent:"))
+                    .unwrap_or(&record.metadata.workspace_path)
+                    .to_string(),
+                created_at: record.started_at,
+                events,
+                usage: Usage::default(),
+            },
+        );
+    }
+    Ok(())
+}
+
+/// Persist the complete, ordered application timeline before its handler
+/// reports success. SessionStorePlan is deliberately constructed from the
+/// public native record/paths/events contract instead of any hook payload.
+fn persist_session(
+    store: &SessionStoreConfig,
+    session_id: &str,
+    session: &Session,
+) -> Result<(), (StatusCode, String)> {
+    let now = chrono::Utc::now();
+    let turns = session
+        .events
+        .iter()
+        .map(|event| {
+            let parent_event_id = event.sequence.checked_sub(1).and_then(|previous| {
+                session
+                    .events
+                    .get(previous as usize)
+                    .map(|parent| parent.event_id.clone())
+            });
+            Ok(SessionTurn {
+                sequence: event.sequence as usize,
+                role: match event.evidence_kind {
+                    EvidenceKind::ChatMessage => SessionRole::User,
+                    _ => SessionRole::Assistant,
+                },
+                content: serde_json::to_string(event).map_err(|error| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("session_event_encode_failed: {error}"),
+                    )
+                })?,
+                captured_at: now,
+                tool_name: event
+                    .message
+                    .as_ref()
+                    .and_then(|message| message.tool_calls.first())
+                    .map(|tool| tool.tool_name.clone()),
+                model: event.provider_model_id.clone(),
+                event_meta: Some(SessionTurnEventMeta {
+                    event_id: Some(event.event_id.clone()),
+                    parent_event_id,
+                    event_type: Some(format!("{:?}", event.evidence_kind)),
+                    turn_id: event.run_id.clone(),
+                    message_id: event.message_id.clone(),
+                    tool_call_id: event.tool_call_id.clone(),
+                    model_id: event.provider_model_id.clone(),
+                    ..SessionTurnEventMeta::default()
+                }),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let record = SessionRecord {
+        schema_version: 1,
+        session_id: session_id.to_string(),
+        source: "context-agent".to_string(),
+        started_at: now,
+        captured_at: now,
+        metadata: SessionMetadata {
+            workspace_path: session.worktree_id.clone(),
+            conversation_id: Some(session_id.to_string()),
+            agent_id: Some(format!("context-agent:{}", session.worktree_id)),
+            ticket_id: None,
+            model: None,
+            trigger: Some("http".to_string()),
+            provisioning: None,
+            producer: Some("context-agent".to_string()),
+            copilot_version: None,
+            vscode_version: None,
+            protocol_version: Some(1),
+            worktree: None,
+        },
+        turns,
+        links: Default::default(),
+        track_id: None,
+        anchor_ticket_id: None,
+        parent_session_id: None,
+        spawned_session_id: None,
+        emitted_handoff_ids: Vec::new(),
+        picked_up_handoff_ids: Vec::new(),
+    };
+    let paths = store.paths_for(&record).map_err(store_error)?;
+    SessionStorePlan {
+        record,
+        paths,
+        events: None,
+    }
+    .persist()
+    .map_err(store_error)?;
+    Ok(())
+}
+
+fn store_error(error: session_api::SessionError) -> (StatusCode, String) {
+    tracing::error!(%error, "native session persistence failed");
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "session_store_unavailable".to_string(),
+    )
+}
+
+/// Construct the published provider bridge only when a live configuration was
+/// explicitly supplied. Its template authorizes the owned MCP/read tools and
+/// the request has a bounded three-turn observation budget. Offline requests
+/// fail closed rather than returning a fabricated assistant response.
+#[cfg(not(test))]
+async fn live_agent_response(content: &str) -> Result<ConversationMessage, (StatusCode, String)> {
+    let config_path = std::env::var_os("CONTEXT_AGENT_CONFIG").ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "offline_ai_unavailable: no model executor is configured".to_string(),
+    ))?;
+    let config = Config::load(std::path::Path::new(&config_path)).map_err(|error| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!("provider_configuration_unavailable: {error}"),
+        )
+    })?;
+    let template = AgentTemplate::load(&config.template_path()).map_err(|error| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!("provider_template_unavailable: {error}"),
+        )
+    })?;
+    let executor = RigAgentExecutor::from_template(&config, &template, |tools| tools)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("provider_bridge_unavailable: {error}"),
+            )
+        })?;
+    let response = executor
+        .execute(AgentRequest::new(content, 3))
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("provider_execution_failed: {error}"),
+            )
+        })?;
+    Ok(ConversationMessage {
+        role: "assistant".to_string(),
+        blocks: vec![RichTextBlock::Paragraph {
+            text: redact_content(&response.text),
+        }],
+        tool_calls: Vec::new(),
+    })
 }
 
 fn redact_content(content: &str) -> String {

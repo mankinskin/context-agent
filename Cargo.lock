@@ -689,6 +689,7 @@ version = "0.1.0"
 dependencies = [
  "agent-builder",
  "axum",
+ "chrono",
  "http-body-util",
  "reqwest 0.12.28",
  "serde",
@@ -699,6 +700,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

@@ -29,7 +29,7 @@ function parseArgs(argv) {
     if (!options[name]) throw failure("INVALID_ARGUMENT", `invalid: --${name.replaceAll("_", "-")} is required`);
   }
   if (!["offline", "live"].includes(options.lane)) throw failure("INVALID_ARGUMENT", `invalid lane: ${options.lane}`);
-  if (options.scenario !== "baseline") throw failure("UNSUPPORTED_SCENARIO", `unsupported scenario: ${options.scenario}`);
+  if (!["baseline", "bridge"].includes(options.scenario)) throw failure("UNSUPPORTED_SCENARIO", `unsupported scenario: ${options.scenario}`);
   if (options.lane !== "offline") throw failure("UNSUPPORTED_LANE", "unsupported lane: live is not implemented");
   return options;
 }
@@ -112,7 +112,7 @@ async function verifyArtifacts(root) {
     const events = (await readFile(join(runRoot, "events.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
     const requireEvidence = (condition, message) => { if (!condition) throw failure("ARTIFACT_INVALID", message); };
     requireEvidence(manifest.outcome === "passed" && manifest.run_id === basename(runRoot), "failed or mismatched run identity");
-    requireEvidence(manifest.scenario === "baseline" && manifest.lane === "offline", "missing lane/scenario");
+    requireEvidence(["baseline", "bridge"].includes(manifest.scenario) && manifest.lane === "offline", "missing lane/scenario");
     requireEvidence(manifest.browser?.base_url === manifest.base_url && /^http:\/\/127\.0\.0\.1:\d+$/.test(manifest.base_url), "missing URL identity");
     requireEvidence(manifest.owned_pid === manifest.executable_identity?.pid && manifest.owned_pid > 0, "missing executable PID identity");
     requireEvidence(manifest.executable_identity?.sha256?.length === 64 && manifest.static_identity?.length === 64, "missing build identity");
@@ -197,7 +197,8 @@ async function runBaseline(options) {
       if (ms <= 0) throw failure("SCENARIO_TIMEOUT", "offline work deadline exceeded; cleanup reserved");
       return ms;
     };
-    const server = run.startProcess(executable, [], { role: "backend", env: { PORT: String(port), STATIC_DIR: staticRoot }, timeoutMs: remaining() });
+    const nativeStore = join(run.runRoot, "native-session-store");
+    const server = run.startProcess(executable, [], { role: "backend", env: { PORT: String(port), STATIC_DIR: staticRoot, SESSION_STORE_ROOT: nativeStore }, timeoutMs: remaining() });
     run.manifest.owned_pid = server.record.pid;
     run.manifest.executable_identity.pid = server.record.pid;
     await run.persistManifest();
@@ -256,7 +257,7 @@ async function main() {
   try {
     const options = parseArgs(process.argv.slice(2));
     if (options.help) {
-      console.log("Usage: --lane offline|live --scenario baseline --artifact-root <path> --budget-ledger <path>\n--verify-artifacts <run-path> reads prior evidence only; --help\nOnly offline baseline is implemented; all other lanes/scenarios fail explicitly.");
+      console.log("Usage: --lane offline|live --scenario baseline|bridge --artifact-root <path> --budget-ledger <path>\n--verify-artifacts <run-path> reads prior evidence only; --help\nOnly offline baseline and bridge scenarios are implemented; live fails explicitly.");
     } else if (options.verify_artifacts) {
       await verifyArtifacts(options.verify_artifacts);
       console.log("artifact verification passed");
