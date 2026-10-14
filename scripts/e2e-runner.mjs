@@ -4,6 +4,7 @@ import { copyFile, cp, mkdir, readFile, readdir, stat, writeFile } from "node:fs
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createOwnedRun as ownedRun, failure } from "./e2e-lifecycle.mjs";
+import { captureNativeBridge, snapshotSessionStores, verifyNativeBridge } from "./e2e-native.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -120,7 +121,7 @@ async function verifyArtifacts(root) {
     requireEvidence(manifest.tool_versions?.playwright && manifest.tool_versions?.chromium, "missing browser versions");
     requireEvidence(manifest.fixture_proof?.marker === "workflow-proof-29ad8d96", "missing fixture read-back");
     requireEvidence(manifest.scenario_elapsed_ms <= 60_000 && manifest.readiness_elapsed_ms <= 30_000, "deadline exceeded");
-    requireEvidence(Array.isArray(assertions) && assertions.length === 4 && assertions.every((item) => item.passed === true)
+    requireEvidence(Array.isArray(assertions) && assertions.length === (manifest.scenario === "bridge" ? 5 : 4) && assertions.every((item) => item.passed === true)
       && ["RUN-01", "RUN-02", "RUN-03", "RUN-04"].every((id) => assertions.some((item) => item.criterion === id)), "missing passing criterion evidence");
     requireEvidence(cleanup.exit_join_result === "joined" && cleanup.remaining_resource_count === 0 && cleanup.fixture_absent === true
       && cleanup.owned_resources.some((entry) => entry.pid === manifest.owned_pid && entry.closed && entry.absent), "missing observed backend cleanup");
@@ -135,9 +136,31 @@ async function verifyArtifacts(root) {
     const browserResult = await read("browser-result.json");
     requireEvidence(browserResult.stats.expected === 1 && browserResult.stats.unexpected === 0
       && browserResult.stats.skipped === 0 && browserResult.stats.flaky === 0, "browser assertions did not complete");
+    const screenshots = manifest.scenario === "bridge" ? ["bridge-before.png", "bridge-after.png"] : ["baseline-desktop.png", "baseline-narrow.png"];
     requireEvidence(manifest.browser.artifacts.some((item) => item.path.endsWith("trace.zip"))
-      && ["baseline-desktop.png", "baseline-narrow.png"].every((name) => manifest.browser.artifacts.some((item) => item.path.endsWith(name))), "missing browser evidence");
-    for (const item of [...manifest.browser.artifacts, ...manifest.static_assets, manifest.executable_identity]) {
+      && screenshots.every((name) => manifest.browser.artifacts.some((item) => item.path.endsWith(name))), "missing browser evidence");
+    const nativeFiles = [];
+    if (manifest.scenario === "bridge") {
+      requireEvidence(assertions.some((item) => item.criterion === "APP-01"), "missing native bridge criterion");
+      const bridge = manifest.bridge;
+      requireEvidence(bridge?.before_pid > 0 && bridge.after_pid > 0 && bridge.before_pid !== bridge.after_pid, "missing real backend restart");
+      requireEvidence(cleanup.owned_resources.some((entry) => entry.pid === bridge.after_pid && entry.closed && entry.absent), "restarted backend was not joined");
+      for (const phase of ["before", "after"]) {
+        const record = bridge[phase];
+        const observed = verifyNativeBridge(await read(`native-${phase}/session.json`), await read(`native-${phase}/transcript.json`), bridge.store_root);
+        requireEvidence(JSON.stringify(observed) === JSON.stringify(record.observed), "native read-back differs");
+        nativeFiles.push(...record.files);
+      }
+      requireEvidence(JSON.stringify(bridge.before.observed) === JSON.stringify(bridge.after.observed), "restart changed durable identity or history");
+      const beforeResult = await read("browser-before-result.json");
+      requireEvidence(beforeResult.stats.expected === 1 && beforeResult.stats.unexpected === 0 && beforeResult.stats.skipped === 0 && beforeResult.stats.flaky === 0, "pre-restart browser did not pass");
+      requireEvidence(events.some((entry) => entry.kind === "backend_restarted" && entry.before_pid === bridge.before_pid && entry.after_pid === bridge.after_pid), "missing restart lifecycle evidence");
+      const stores = await read("productive-session-stores.json");
+      requireEvidence(JSON.stringify(stores.before) === JSON.stringify(stores.after), "productive session store changed");
+      requireEvidence(stores.excluded_session_id === "29ad8d96-9400-4627-a032-e02a3d8bd971"
+        && stores.source_filter === "context-agent" && stores.before.length === 2, "missing productive store scope");
+    }
+    for (const item of [...manifest.browser.artifacts, ...manifest.static_assets, manifest.executable_identity, ...nativeFiles]) {
       requireEvidence(item.path.startsWith(`${runRoot}\\`) || item.path.startsWith(`${runRoot}/`), "artifact outside owned run");
       requireEvidence(await fileHash(item.path) === item.sha256, `artifact hash differs: ${item.path}`);
     }
@@ -170,6 +193,10 @@ async function runBaseline(options) {
     run.manifest.scoped_dirty_state = (await run.spawn("git", ["status", "--short"])).stdout.trim();
     const diff = await run.spawn("git", ["diff", "--binary", "HEAD"]);
     run.manifest.dirty_diff_sha256 = hash(diff.stdout + JSON.stringify(await artifacts(join(repositoryRoot, "scripts"))));
+    const productiveRoots = [join(repositoryRoot, ".session"), join(repositoryRoot, "..", ".workflow-tools", "session", "sessions")];
+    const excludedSessionId = "29ad8d96-9400-4627-a032-e02a3d8bd971";
+    const productiveBefore = options.scenario === "bridge"
+      ? await snapshotSessionStores(productiveRoots, excludedSessionId, "context-agent") : null;
     await provisionFixtures(run);
     const frontendBuild = await run.spawn("trunk", ["build", "--release"], { cwd: join(repositoryRoot, "frontend"), role: "frontend-build" });
     const backendBuild = await run.spawn("cargo", ["build", "-p", "backend"], { role: "backend-build" });
@@ -197,8 +224,9 @@ async function runBaseline(options) {
       if (ms <= 0) throw failure("SCENARIO_TIMEOUT", "offline work deadline exceeded; cleanup reserved");
       return ms;
     };
-    const nativeStore = join(run.runRoot, "native-session-store");
-    const server = run.startProcess(executable, [], { role: "backend", env: { PORT: String(port), STATIC_DIR: staticRoot, SESSION_STORE_ROOT: nativeStore }, timeoutMs: remaining() });
+    const nativeStore = join(run.fixtureRoot, "native-session-store");
+    const startBackend = () => run.startProcess(executable, [], { role: "backend", env: { PORT: String(port), STATIC_DIR: staticRoot, SESSION_STORE_ROOT: nativeStore }, timeoutMs: remaining() });
+    const server = startBackend();
     run.manifest.owned_pid = server.record.pid;
     run.manifest.executable_identity.pid = server.record.pid;
     await run.persistManifest();
@@ -213,10 +241,33 @@ async function runBaseline(options) {
       if (asset.sha256 !== asset.served_sha256 || server.record.closed) throw failure("BUILD_MISMATCH", "served asset or owned server differs");
     }
     await run.event({ kind: "server_ready", pid: server.record.pid, base_url: baseUrl });
-    const browser = await run.spawn(process.execPath, [cli, "test", "baseline.spec.ts", "--config", "playwright.config.ts", "--reporter=list,json", "--output", join(run.runRoot, "browser")], {
-      cwd: join(repositoryRoot, "frontend", "e2e"), env: { BASE_URL: baseUrl, PLAYWRIGHT_JSON_OUTPUT_FILE: join(run.runRoot, "browser-result.json") }, timeoutMs: remaining(), role: "browser",
+    const runBrowser = (phase) => run.spawn(process.execPath, [cli, "test", options.scenario === "bridge" ? "bridge.spec.ts" : "baseline.spec.ts", "--config", "playwright.config.ts", "--reporter=list,json", "--output", join(run.runRoot, phase === "before" ? "browser-before" : "browser")], {
+      cwd: join(repositoryRoot, "frontend", "e2e"), env: { BASE_URL: baseUrl, BRIDGE_PHASE: phase, PLAYWRIGHT_JSON_OUTPUT_FILE: join(run.runRoot, phase === "before" ? "browser-before-result.json" : "browser-result.json") }, timeoutMs: remaining(), role: `browser-${phase}`,
     });
+    if (options.scenario === "bridge") {
+      await runBrowser("before");
+      const before = await captureNativeBridge(nativeStore, run.runRoot, "before");
+      await server.stop();
+      await server.completed;
+      if (!server.record.closed || !server.record.absent) throw failure("RESTART_NOT_JOINED", "original backend did not exit");
+      await ensurePortAvailable(port);
+      const restarted = startBackend();
+      await waitForReady(baseUrl, { timeoutMs: Math.min(30_000, remaining()), processHandle: restarted });
+      run.manifest.bridge = { before_pid: server.record.pid, after_pid: restarted.record.pid, store_root: nativeStore, before };
+      await run.event({ kind: "backend_restarted", before_pid: server.record.pid, after_pid: restarted.record.pid });
+    }
+    const browser = await runBrowser(options.scenario === "bridge" ? "after" : "baseline");
     run.manifest.browser = { pid: browser.pid, base_url: baseUrl, artifacts: await artifacts(join(run.runRoot, "browser")) };
+    if (options.scenario === "bridge") {
+      run.manifest.browser.artifacts.push(...await artifacts(join(run.runRoot, "browser-before")));
+      run.manifest.bridge.after = await captureNativeBridge(nativeStore, run.runRoot, "after");
+      const after = await snapshotSessionStores(productiveRoots, excludedSessionId, "context-agent");
+      await writeFile(join(run.runRoot, "productive-session-stores.json"), `${JSON.stringify({
+        excluded_session_id: excludedSessionId, source_filter: "context-agent", before: productiveBefore, after,
+        exclusion_reason: "Only productive application manifests/transcripts are compared. Agent capture records and store indexes have independent concurrent writers; no whole-workspace no-write claim is made."
+      }, null, 2)}\n`);
+      if (JSON.stringify(productiveBefore) !== JSON.stringify(after)) throw failure("PRODUCTIVE_STORE_CHANGED", "productive session store fingerprint changed; inspect concurrent writers before proceeding");
+    }
     const results = JSON.parse(await readFile(join(run.runRoot, "browser-result.json"), "utf8"));
     const attachment = results.suites[0].specs[0].tests[0].results[0].attachments.find((item) => item.name === "browser-version");
     run.manifest.tool_versions.chromium = attachment.body
@@ -234,11 +285,12 @@ async function runBaseline(options) {
   run.manifest.end = new Date().toISOString();
   run.manifest.outcome = error ? "failed" : "passed";
   const assertions = error ? [{ criterion: "runner", observed: error.message, passed: false }] : [
-    { criterion: "RUN-01", artifact_path: "browser", expected: "desktop/narrow baseline", observed: run.manifest.browser, passed: true },
+    { criterion: "RUN-01", artifact_path: "browser", expected: options.scenario === "bridge" ? "UI submission and restart restoration" : "desktop/narrow baseline", observed: run.manifest.browser, passed: true },
     { criterion: "RUN-02", artifact_path: "manifest.json", expected: "owned build/server/browser", observed: run.manifest.base_url, passed: true },
     { criterion: "RUN-03", artifact_path: "cleanup.json", expected: 0, observed: 0, passed: true },
     { criterion: "RUN-04", artifact_path: "manifest.json", expected: "unchanged ledger", observed: run.manifest.ledger_after_sha256, passed: true },
   ];
+  if (!error && options.scenario === "bridge") assertions.push({ criterion: "APP-01", artifact_path: "native-after/transcript.json", expected: "four genuine ordered native events retained after restart", observed: run.manifest.bridge.after.observed, passed: true });
   await writeFile(join(run.runRoot, "assertions.json"), `${JSON.stringify(assertions, null, 2)}\n`);
   await run.event({ kind: "run_finished", outcome: run.manifest.outcome, code: error?.code ?? null, ...run.manifest.ledger_counts, provider_sends_delta: run.manifest.provider_sends_delta });
   await run.persistManifest();
@@ -263,7 +315,7 @@ async function main() {
       console.log("artifact verification passed");
     } else {
       await runBaseline(options);
-      console.log("offline baseline passed");
+      console.log(`${options.lane} ${options.scenario} passed`);
     }
   } catch (error) {
     console.error(`${error.code ?? "RUNNER_FAILED"}: ${error.message}`);

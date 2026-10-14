@@ -11,6 +11,45 @@ import { test } from "node:test";
 const runnerPath = fileURLToPath(new URL("./e2e-runner.mjs", import.meta.url));
 const runner = () => import("./e2e-runner.mjs");
 
+test("native bridge rejects baseline-only evidence without durable failure turns", async () => {
+  const { verifyNativeBridge } = await import("./e2e-native.mjs");
+  const manifest = { source: "context-agent", session_id: "synthetic-session", started_at: "2026-10-14T00:00:00Z",
+    metadata: { workspace_path: "synthetic-store", agent_id: "context-agent", producer: "context-agent" } };
+  assert.throws(() => verifyNativeBridge(manifest, { session_id: manifest.session_id, turns: [] }, "synthetic-store"),
+    { code: "ERR_ASSERTION" });
+});
+
+test("productive store fingerprints detect changed files and document absent roots", async (t) => {
+  const root = await fixture(t);
+  const { snapshotSessionStores } = await import("./e2e-native.mjs");
+  await mkdir(join(root, "controller"));
+  await writeFile(join(root, "controller", "capture.json"), "capture-one");
+  await writeFile(join(root, "productive.json"), "one");
+  const roots = [root, join(root, "absent")];
+  const before = await snapshotSessionStores(roots, "controller");
+  await writeFile(join(root, "controller", "capture.json"), "capture-two");
+  assert.deepEqual(await snapshotSessionStores(roots, "controller"), before);
+  await writeFile(join(root, "productive.json"), "two");
+  assert.notDeepEqual(await snapshotSessionStores(roots, "controller"), before);
+  assert.equal(before[1].exists, false);
+});
+
+test("application fingerprints ignore concurrent capture but detect application writes", async (t) => {
+  const root = await fixture(t);
+  const { snapshotSessionStores } = await import("./e2e-native.mjs");
+  for (const [id, source] of [["application", "context-agent"], ["capture", "copilot"]]) {
+    await mkdir(join(root, id));
+    await writeFile(join(root, id, "session.json"), JSON.stringify({ source }));
+    await writeFile(join(root, id, "transcript.json"), "before");
+  }
+  const before = await snapshotSessionStores([root], "controller", "context-agent");
+  assert.equal(before[0].files.length, 2);
+  await writeFile(join(root, "capture", "transcript.json"), "after");
+  assert.deepEqual(await snapshotSessionStores([root], "controller", "context-agent"), before);
+  await writeFile(join(root, "application", "transcript.json"), "after");
+  assert.notDeepEqual(await snapshotSessionStores([root], "controller", "context-agent"), before);
+});
+
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "context-agent-runner-unit-"));
   t.after(() => rm(root, { recursive: true, force: true }));

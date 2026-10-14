@@ -1,9 +1,9 @@
 # context-agent
 
-A new tool instantiated from the `template` Dioxus (frontend, WASM) + Axum
-(backend) starter app. Currently unmodified starter content -- no
-Context Agent-specific feature work has been added yet. Follow
-[USAGE.md](./USAGE.md) to add real endpoints and UI.
+A Context Agent playground built on the `template` Dioxus (frontend, WASM) +
+Axum (backend) starter. Native persistent sessions and an owned offline
+browser/restart proof are implemented. Responsive navigation, selective
+preambles/widgets and the rooted editor remain separate roadmap work.
 
 When this repo is checked out as the `context-agent` submodule inside the
 `meta-workspace` superproject, the template-modernization dossier that
@@ -17,10 +17,11 @@ A standalone clone of this repo does not include that dossier.
 
 ## What's here
 
-- `frontend/` — a Dioxus 0.6 web app (Trunk + wasm32 target), rendering a
-  single input that POSTs to `/api/echo` and shows the result.
-- `backend/` — an Axum app exposing `GET /health` and a stub
-  `POST /api/echo`, serving `frontend/dist` for every other path.
+- [frontend/](./frontend/) — a Dioxus 0.6 web app (Trunk + wasm32 target)
+  with session creation, refresh, selection, timeline and diagnostics.
+- [backend/](./backend/) — an Axum app exposing health, session, message,
+  timeline, credits and weather routes, with same-origin static serving.
+  Native Session API records are authoritative; in-memory state is a cache.
 - `Dockerfile` — builds `FROM ${BASE_IMAGE}` (an `ARG` defaulting to the
   digest-verified `ghcr.io/mankinskin/infrastructure-base@sha256:...`
   image), inheriting the shared Rust/wasm/trunk toolchain and `cargo-chef`
@@ -47,11 +48,34 @@ A standalone clone of this repo does not include that dossier.
 
 See [USAGE.md](./USAGE.md) for how to extend this into a real application.
 
-## Owned offline browser baseline
+## Native sessions and provider boundary
+
+`SESSION_STORE_ROOT` selects the native Session API store; manual development
+defaults to `.session` relative to the backend working directory. Tests use
+isolated fixture roots. Parents are validated, updates serialized, and genuine
+user/prompt/request/result-or-failure events persisted before returning.
+Stable message IDs are idempotent for the same content and prompt provenance;
+changed payloads conflict. Failed IDs are not silently retried. Refresh and
+selection restore persisted timelines after a backend restart.
+
+Live requests use the published restricted Agent Builder execution policy,
+not the unrestricted legacy constructor. Operators must supply
+`CONTEXT_AGENT_CONFIG`, `CONTEXT_AGENT_BUDGET_LEDGER`,
+`CONTEXT_AGENT_EVIDENCE_ROOT` and `CONTEXT_AGENT_PROVIDER_SESSION_ID`.
+The policy bounds model/output, cumulative reservations and owned MCP
+shutdown. Credentials stay server-side. The offline runner deliberately
+omits live configuration: AI is unavailable, never a fabricated success.
+Standalone lifecycle requests return an explicit unavailable diagnostic until
+a real lifecycle operation is implemented. Missing token/cost telemetry is
+unknown, not zero. The global write mutex prioritizes correct ordering over
+independent-session throughput.
+
+## Owned offline browser baseline and native bridge
 
 The credential-free owned runner builds the frontend, starts an isolated
 backend on a free loopback port, provisions synthetic external fixtures, and
-runs only `frontend/e2e/baseline.spec.ts`. It never uses the ambient server
+runs [baseline.spec.ts](./frontend/e2e/baseline.spec.ts) or
+[bridge.spec.ts](./frontend/e2e/bridge.spec.ts). It never uses the ambient server
 or the weather/provider path. Preserve the artifact root and ledger between
 runs:
 
@@ -59,6 +83,16 @@ runs:
 node scripts/e2e-runner.mjs --lane offline --scenario baseline \
   --artifact-root <retained-artifact-root> --budget-ledger <retained-artifact-root>/live-budget.json
 ```
+
+Use `--scenario bridge` with the same retained root and ledger for the native
+proof: ordinary UI submission, explicit offline failure, owned backend
+stop/join/restart, then ordinary UI restoration. Retained manifest/transcript
+copies prove the same session/start/parent and four ordered unique events,
+including failure and no assistant success. Productive session-store
+fingerprints of native `source=context-agent` manifests/transcripts must remain
+identical. Concurrent agent capture records and store indexes are outside that
+application-data scope; no whole-workspace no-write claim is made. The receipt
+records the exact roots, source filter, exclusion and observed hashes.
 
 `--help` documents the complete interface. Live and future scenarios fail
 explicitly until they have an owned implementation.
