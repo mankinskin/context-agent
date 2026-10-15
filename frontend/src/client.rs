@@ -1,6 +1,6 @@
 use super::*;
 
-async fn request_json<T: DeserializeOwned>(
+pub(super) async fn request_json<T: DeserializeOwned>(
     method: &str,
     path: &str,
     body: Option<String>,
@@ -73,8 +73,41 @@ pub(super) async fn send_message(
             path: Some(".agents/skills/rust-best-practices/SKILL.md".to_string()),
             inclusion_reason: "selected for Rust implementation".to_string(),
         }],
+        choice_answer: None,
     })
     .map_err(|e| e.to_string())?;
+    request_json(
+        "POST",
+        &format!("/api/sessions/{session_id}/messages"),
+        Some(body),
+    )
+    .await
+}
+
+pub(super) async fn send_choice(
+    session_id: &str,
+    answer: Option<ChoiceAnswer>,
+) -> Result<MessageResponse, String> {
+    let content = answer.as_ref().map(|answer| format!("Selected {}", answer.choice))
+        .unwrap_or_else(|| "Read the authorized Workflow proof ticket using get_ticket and report its actual proof marker. Then offer the lookup choice.".into());
+    let body = serde_json::to_string(&MessageRequest {
+        message_id: answer
+            .as_ref()
+            .map(|answer| format!("answer-{}", answer.widget_id))
+            .unwrap_or_else(|| format!("choice-{}", js_sys::Date::now())),
+        content,
+        agent_template_id: Some(
+            if answer.is_some() {
+                "choice-answer"
+            } else {
+                "choice-mcp"
+            }
+            .into(),
+        ),
+        prompt_sources: Vec::new(),
+        choice_answer: answer,
+    })
+    .map_err(|error| error.to_string())?;
     request_json(
         "POST",
         &format!("/api/sessions/{session_id}/messages"),

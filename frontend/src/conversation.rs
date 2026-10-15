@@ -50,6 +50,12 @@ pub(super) fn MessageBlock(block: RichTextBlock) -> Element {
         RichTextBlock::BulletList { items } => rsx! {
             ul { for item in items { li { "{item}" } } }
         },
+        RichTextBlock::MultipleChoice { widget_id, options } => rsx! {
+            choices::ChoiceWidget { widget_id, options }
+        },
+        RichTextBlock::ChoiceAnswer { widget_id, choice } => rsx! {
+            p { class: "choice-answer", "Answer for {widget_id}: {choice}" }
+        },
     }
 }
 

@@ -116,6 +116,8 @@ pub(super) fn message_plain_text(message: &ConversationMessage) -> String {
         .map(|block| match block {
             RichTextBlock::Paragraph { text } | RichTextBlock::Heading { text, .. } => text.clone(),
             RichTextBlock::BulletList { items } => items.join(" · "),
+            RichTextBlock::MultipleChoice { options, .. } => options.join(" / "),
+            RichTextBlock::ChoiceAnswer { choice, .. } => choice.clone(),
         })
         .collect::<Vec<_>>()
         .join("\n")

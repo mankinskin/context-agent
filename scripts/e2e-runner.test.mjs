@@ -108,10 +108,35 @@ test("help exposes the owned-runner interface without starting services", () => 
   assert.match(result.stdout, /--lane/);
   assert.match(result.stdout, /--scenario/);
   assert.match(result.stdout, /sessions/);
+  assert.match(result.stdout, /choice-mcp/);
   assert.match(result.stdout, /--artifact-root/);
   assert.match(result.stdout, /--budget-ledger/);
   assert.match(result.stdout, /--media all\|desktop\|mobile\|tablet/);
   assert.match(result.stdout, /--verify-artifacts/);
+});
+
+test("offline choice evidence requires actual enabled config and failure without fabricated widgets", async t => {
+  const root = await fixture(t);
+  const { verifyChoice } = await import("./e2e-choice.mjs");
+  await mkdir(join(root, "choice"));
+  await writeFile(join(root, "choice", "preambles.json"), JSON.stringify([
+    { id: "PREAMBLE_ENABLED_29AD", enabled: true }, { id: "PREAMBLE_DISABLED_29AD", enabled: false },
+  ]));
+  await writeFile(join(root, "choice", "session.json"), JSON.stringify({ source: "context-agent", session_id: "unit-fixture" }));
+  const turns = ["chat_message", "prompt_assembly", "model_request", "failure"].map((kind, index) => ({
+    sequence: index, event_meta: { event_id: `event-${index}`, parent_event_id: index ? `event-${index - 1}` : null },
+    content: JSON.stringify({ event_id: `event-${index}`, sequence: index, evidence_kind: kind,
+      source_id: index === 3 ? "offline_ai_unavailable" : null,
+      prompt_sources: kind === "prompt_assembly" ? [{ source_kind: "preamble", source_id: "PREAMBLE_ENABLED_29AD" }] : [] }),
+  }));
+  const path = join(root, "choice", "transcript.json");
+  await writeFile(path, JSON.stringify({ session_id: "unit-fixture", turns }));
+  assert.equal((await verifyChoice(root, false)).widget_id, null);
+  const event = JSON.parse(turns[3].content);
+  event.message = { blocks: [{ type: "multiple_choice", widget_id: "invented" }] };
+  turns[3].content = JSON.stringify(event);
+  await writeFile(path, JSON.stringify({ session_id: "unit-fixture", turns }));
+  await assert.rejects(verifyChoice(root, false));
 });
 
 for (const args of [

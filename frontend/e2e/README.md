@@ -36,3 +36,40 @@ To check retained evidence without starting services or sending requests:
 ```powershell
 node scripts\e2e-runner.mjs --verify-artifacts <AR>\<run-id>
 ```
+
+## Global preambles and lookup choice
+
+Expand **Global preambles**, add an ID/text pair, and enable the desired
+blocks. Configuration persists in `preambles.json` beneath the explicit native
+session-store root. Only enabled blocks enter provider instructions. IDs are
+unique ASCII letters/digits/underscore/hyphen (up to 64 bytes); configuration
+allows 16 blocks and 4096 bytes of text per block. Storage and validation
+failures are visible, not successful empty configurations.
+
+**Start lookup choice** uses the configured provider and the existing synthetic
+ticket grant. A successful initial response contains one typed lookup-a/
+lookup-b widget. Submitting an option records one native user answer and
+executes the follow-up in the same session. Reload restores the stable widget
+and disables its submitted controls. Invalid/repeated answers are rejected.
+Native tool events remain durable; the conversation renders each tool result
+once through its assistant response rather than duplicating native events.
+
+`--lane offline --scenario choice --media all` checks real unavailable/error
+behavior, persistence and responsive controls without fabricating an AI widget.
+`--lane offline --scenario all --media all` runs baseline, bridge, sessions and
+choice across all five projects. The successful widget contract requires the
+separately authorized paid flow:
+
+```powershell
+node scripts\e2e-runner.mjs --lane live --scenario choice-mcp --media mobile --artifact-root <AR> --budget-ledger <AR>\live-budget.json
+```
+
+The live origin submits initial/answer turns; four other projects inspect the
+actual retained result without submitting. The runner enables the opt-in
+provider observer only for this scenario and compares actual serialized
+system/developer preamble SHA-256 and synthetic presence probes with expected
+enabled-only instructions. Native config, widget/answer, tool identities,
+served build hashes and cleanup are read back separately. Failure remains
+failure; partial native choice/config artifacts are captured before cleanup
+where available. The cumulative 20-reservation ledger, 1024 output cap,
+120-second inclusive deadline and no-automatic-paid-retry rule still apply.

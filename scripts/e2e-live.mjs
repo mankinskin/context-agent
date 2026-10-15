@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { artifacts, createOwnedRun, ensurePortAvailable, fileHash, freePort, mediaProjects, provisionFixtures, waitForReady } from "./e2e-runner.mjs";
 import { snapshotSessionStores } from "./e2e-native.mjs";
 import { failure } from "./e2e-lifecycle.mjs";
+import { captureChoice, verifyChoice } from "./e2e-choice.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const digest = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -52,6 +53,7 @@ export async function verifyLiveArtifacts(root) {
   assert.equal(manifest.provider_sends_delta, after.sent - before.sent);
   const events = (await readFile(join(root, "provider", "events.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
   for (const event of events) {
+    if (event.kind === "outbound_preamble_observed") continue;
     assert.equal(event.model, "gpt-5-mini");
     assert.equal(event.max_output_tokens, 1024);
   }
@@ -62,6 +64,13 @@ export async function verifyLiveArtifacts(root) {
   const observed = verifyLiveNative(await readJson(join(root, "native", "session.json")),
     await readJson(join(root, "native", "transcript.json")), events);
   assert.deepEqual(manifest.native_observed, observed);
+  if (manifest.scenario === "choice-mcp") {
+    assert.deepEqual(manifest.choice.observed, await verifyChoice(root, true, events));
+    for (const observation of events.filter(event => event.kind === "outbound_preamble_observed")) {
+      assert.equal(observation.system_prompt_sha256, manifest.preamble_expected_sha256);
+    }
+    for (const item of manifest.choice.files) assert.equal(await fileHash(item.path), item.sha256);
+  }
   assert.equal(manifest.media_checks.length, 5);
   for (const check of manifest.media_checks) {
     const result = await readJson(join(root, check.result_file));
@@ -92,6 +101,7 @@ async function configure(run) {
     "Return the exact proof marker from its actual result. Never fabricate a result. No other tool or ticket is authorized.",
   ].join("\n");
   await writeFile(join(run.fixtureRoot, "proof.md"), template);
+  run.manifest.preamble_expected_sha256 = digest(Buffer.from(`${template.split("\n---\n")[1].trim()}\n\n[preamble:PREAMBLE_ENABLED_29AD]\nSynthetic instruction PREAMBLE_ENABLED_29AD.`));
   const config = Object.entries({
     template_dir: run.fixtureRoot, template: "proof.md", model: "gpt-5-mini",
     file_root: run.fixtureRoot, ticket_workspace: run.manifest.store_root, ticket_mcp_command: "ticket-mcp",
@@ -103,13 +113,13 @@ async function configure(run) {
 
 export async function runLive(options) {
   const run = await createOwnedRun({ artifactRoot: options.artifact_root, budgetLedger: options.budget_ledger,
-    runId: randomUUID(), lane: "live", scenario: "spine" });
+    runId: randomUUID(), lane: "live", scenario: options.scenario });
   console.log(`run_id=${run.manifest.run_id} artifacts=${run.runRoot}`);
-  let error, start;
+  let error, start, nativeStore;
   try {
     const ledgerBefore = await readFile(options.budget_ledger);
     const ledger = JSON.parse(ledgerBefore);
-    if (!Number.isInteger(ledger.reserved) || ledger.reserved > 18 || ledger.max_reservations !== 20
+    if (!Number.isInteger(ledger.reserved) || ledger.reserved > (options.scenario === "choice-mcp" ? 16 : 18) || ledger.max_reservations !== 20
       || !Number.isInteger(ledger.sent) || ledger.sent > ledger.reserved) {
       throw failure("BUDGET_UNAVAILABLE", "invalid ledger or insufficient two-reservation spine headroom");
     }
@@ -136,7 +146,7 @@ export async function runLive(options) {
     const port = await freePort();
     await ensurePortAvailable(port);
     const base = `http://127.0.0.1:${port}`;
-    const nativeStore = join(run.fixtureRoot, "native-session-store");
+    nativeStore = join(run.fixtureRoot, "native-session-store");
     const productiveRoots = [join(repo, ".session"), join(repo, "..", ".workflow-tools", "session", "sessions")];
     const productiveBefore = await snapshotSessionStores(productiveRoots, "29ad8d96-9400-4627-a032-e02a3d8bd971", "context-agent");
     start = performance.now();
@@ -150,6 +160,7 @@ export async function runLive(options) {
       CONTEXT_AGENT_CONFIG: config, CONTEXT_AGENT_BUDGET_LEDGER: options.budget_ledger,
       CONTEXT_AGENT_EVIDENCE_ROOT: join(run.runRoot, "provider"),
       CONTEXT_AGENT_PROVIDER_SESSION_ID: ledger.route_session_id,
+      ...(options.scenario === "choice-mcp" ? { CONTEXT_AGENT_OBSERVE_PREAMBLES: "1" } : {}),
     } });
     run.manifest.base_url = base;
     run.manifest.owned_pid = server.record.pid;
@@ -176,9 +187,9 @@ export async function runLive(options) {
       const before = digest(await readFile(options.budget_ledger));
       const resultFile = `browser-${media[index].name}.json`;
       const output = join(run.runRoot, `browser-${media[index].name}`);
-      await run.spawn(process.execPath, [cli, "test", "spine.spec.ts", "--reporter=list,json", "--output", output], {
+      await run.spawn(process.execPath, [cli, "test", options.scenario === "choice-mcp" ? "choice.spec.ts" : "spine.spec.ts", "--reporter=list,json", "--output", output], {
         cwd: join(repo, "frontend", "e2e"), role: `browser-${media[index].name}`, timeoutMs: remaining(),
-        env: { BASE_URL: base, E2E_MEDIA: JSON.stringify(media[index]), SPINE_PHASE: phase, PLAYWRIGHT_JSON_OUTPUT_FILE: join(run.runRoot, resultFile) },
+        env: { BASE_URL: base, E2E_MEDIA: JSON.stringify(media[index]), SPINE_PHASE: phase, CHOICE_PHASE: phase, PLAYWRIGHT_JSON_OUTPUT_FILE: join(run.runRoot, resultFile) },
       });
       const after = digest(await readFile(options.budget_ledger));
       if (index) assert.equal(after, before, "dependent inspection submitted provider");
@@ -195,11 +206,21 @@ export async function runLive(options) {
       run.manifest.native_files.push({ path, sha256: await fileHash(path) });
     }
     const provider = (await readFile(join(run.runRoot, "provider", "events.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
+    if (options.scenario === "choice-mcp") run.manifest.choice = await captureChoice(nativeStore, run.runRoot, true, provider);
     run.manifest.native_observed = verifyLiveNative(await readJson(join(run.runRoot, "native", "session.json")), await readJson(join(run.runRoot, "native", "transcript.json")), provider);
     await writeFile(join(run.runRoot, "productive-session-stores.json"), JSON.stringify({
       before: productiveBefore, after: await snapshotSessionStores(productiveRoots, "29ad8d96-9400-4627-a032-e02a3d8bd971", "context-agent"),
     }, null, 2));
-  } catch (cause) { error = cause; }
+  } catch (cause) {
+    error = cause;
+    if (options.scenario === "choice-mcp" && nativeStore && !run.manifest.choice) {
+      try {
+        run.manifest.choice = await captureChoice(nativeStore, run.runRoot, true, [], true);
+      } catch (captureError) {
+        run.manifest.partial_capture_error = { code: captureError.code ?? "CAPTURE_FAILED", message: captureError.message };
+      }
+    }
+  }
   try { await run.cleanup(); } catch (cause) { error = error ? new AggregateError([error, cause], `${error.message}; ${cause.message}`) : cause; }
   const after = await readFile(options.budget_ledger);
   await writeFile(join(run.runRoot, "ledger-after.json"), after);
@@ -214,7 +235,7 @@ export async function runLive(options) {
   if (!error) {
     try { await verifyLiveArtifacts(run.runRoot); } catch (cause) { error = cause; }
   }
-  const assertions = [{ criterion: "APP-02", artifact_path: "native/transcript.json",
+  const assertions = [{ criterion: options.scenario === "choice-mcp" ? "APP-04" : "APP-02", artifact_path: "native/transcript.json",
     expected: "real Copilot/MCP native result and five rendered media contexts, zero owned resources",
     observed: error?.message ?? run.manifest.native_observed, passed: !error }];
   await writeFile(join(run.runRoot, "assertions.json"), JSON.stringify(assertions, null, 2));

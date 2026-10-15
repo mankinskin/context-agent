@@ -67,9 +67,31 @@ pub struct ConversationMessage {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RichTextBlock {
-    Paragraph { text: String },
-    Heading { level: u8, text: String },
-    BulletList { items: Vec<String> },
+    Paragraph {
+        text: String,
+    },
+    Heading {
+        level: u8,
+        text: String,
+    },
+    BulletList {
+        items: Vec<String>,
+    },
+    MultipleChoice {
+        widget_id: String,
+        options: Vec<String>,
+    },
+    ChoiceAnswer {
+        widget_id: String,
+        choice: String,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ChoiceAnswer {
+    pub widget_id: String,
+    pub choice: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -158,6 +180,8 @@ pub struct MessageRequest {
     pub agent_template_id: Option<String>,
     #[serde(default)]
     pub prompt_sources: Vec<PromptSource>,
+    #[serde(default)]
+    pub choice_answer: Option<ChoiceAnswer>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -60,6 +60,7 @@ fn build_router(static_dir: &str, store_root: PathBuf, live: bool) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/api/sessions", get(list_sessions).post(create_session))
+        .route("/api/preambles", get(preambles::get).put(preambles::save))
         .route("/api/sessions/:session_id/timeline", get(get_timeline))
         .route("/api/sessions/:session_id/reconnect", get(get_timeline))
         .route("/api/sessions/:session_id/messages", post(create_message))
@@ -321,7 +322,9 @@ fn next_id(prefix: &str) -> String {
     format!("{prefix}-{}", uuid::Uuid::new_v4())
 }
 
+mod choices;
 mod models;
+mod preambles;
 pub use models::*;
 use models::{Session, Usage};
 mod messages;
@@ -334,5 +337,7 @@ mod provider;
 use provider::live_agent_response;
 mod weather;
 use weather::{fetch_weather, get_weather, message_plain_text, weather_message};
+#[cfg(test)]
+mod choice_tests;
 #[cfg(test)]
 mod tests;

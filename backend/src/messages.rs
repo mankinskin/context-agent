@@ -3,7 +3,7 @@ use super::*;
 pub(super) async fn create_message(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
-    Json(request): Json<MessageRequest>,
+    Json(mut request): Json<MessageRequest>,
 ) -> Result<Json<MessageResponse>, (StatusCode, String)> {
     let _transaction = state.transaction.lock().await;
     if request.message_id.trim().is_empty() || request.content.trim().is_empty() {
@@ -13,6 +13,21 @@ pub(super) async fn create_message(
         ));
     }
     hydrate_sessions(&state)?;
+    let preambles = preambles::load(&state)?;
+    request
+        .prompt_sources
+        .extend(
+            preambles
+                .iter()
+                .filter(|block| block.enabled)
+                .map(|block| PromptSource {
+                    source_kind: "preamble".into(),
+                    source_id: block.id.clone(),
+                    revision: None,
+                    path: None,
+                    inclusion_reason: "globally enabled".into(),
+                }),
+        );
     let mut session = state
         .sessions
         .lock()
@@ -20,6 +35,11 @@ pub(super) async fn create_message(
         .get(&session_id)
         .cloned()
         .ok_or((StatusCode::NOT_FOUND, "session not found".to_string()))?;
+    if let Some(answer) = &request.choice_answer {
+        choices::validate_answer(&session, answer)?;
+        request.content = format!("Selected {}. Read the same authorized Workflow proof ticket with get_ticket and report its exact proof marker.", answer.choice);
+        request.agent_template_id = Some("choice-answer".into());
+    }
     if let Some(previous) = session.events.iter().find(|event| {
         event.message_id.as_deref() == Some(request.message_id.as_str())
             && event.evidence_kind == EvidenceKind::ChatMessage
@@ -102,7 +122,16 @@ pub(super) async fn create_message(
             Some(ConversationMessage {
                 usage: None,
                 role: "user".to_string(),
-                blocks: vec![RichTextBlock::Paragraph { text: user_content }],
+                blocks: {
+                    let mut blocks = vec![RichTextBlock::Paragraph { text: user_content }];
+                    if let Some(answer) = &request.choice_answer {
+                        blocks.push(RichTextBlock::ChoiceAnswer {
+                            widget_id: answer.widget_id.clone(),
+                            choice: answer.choice.clone(),
+                        });
+                    }
+                    blocks
+                },
                 tool_calls: Vec::new(),
             }),
         );
@@ -128,9 +157,12 @@ pub(super) async fn create_message(
     persist_session(&state.store, &session_id, &session)?;
     let is_munster_weather = {
         let content = request.content.to_lowercase();
-        content.contains("weather") && (content.contains("munster") || content.contains("münster"))
+        request.agent_template_id.as_deref() != Some("choice-mcp")
+            && request.choice_answer.is_none()
+            && content.contains("weather")
+            && (content.contains("munster") || content.contains("münster"))
     };
-    let result = if is_munster_weather {
+    let mut result = if is_munster_weather {
         fetch_weather("Munster")
             .await
             .map(|observation| weather_message(&observation))
@@ -141,8 +173,17 @@ pub(super) async fn create_message(
                 )
             })
     } else {
-        execute_message(&state, &request.content).await
+        execute_message(&state, &request.content, &preambles).await
     };
+    if request.agent_template_id.as_deref() == Some("choice-mcp") && request.choice_answer.is_none()
+    {
+        if let Ok(message) = &mut result {
+            message.blocks.push(RichTextBlock::MultipleChoice {
+                widget_id: format!("choice-{model_response_id}"),
+                options: vec!["lookup-a".into(), "lookup-b".into()],
+            });
+        }
+    }
     let mut completed = session.events.last().cloned().ok_or((
         StatusCode::INTERNAL_SERVER_ERROR,
         "stored_request_missing".to_string(),
@@ -195,10 +236,11 @@ pub(super) async fn create_message(
 async fn execute_message(
     state: &AppState,
     content: &str,
+    preambles: &[preambles::PreambleBlock],
 ) -> Result<ConversationMessage, (StatusCode, String)> {
     #[cfg(test)]
     {
-        let _ = state.live;
+        let _ = (state.live, preambles);
         Ok(ConversationMessage {
             usage: None,
             role: "assistant".to_string(),
@@ -216,6 +258,6 @@ async fn execute_message(
                 "offline_ai_unavailable: no model executor is configured".to_string(),
             ));
         }
-        live_agent_response(content).await
+        live_agent_response(content, preambles).await
     }
 }

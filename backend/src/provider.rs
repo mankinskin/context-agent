@@ -7,6 +7,7 @@ use super::*;
 #[cfg(not(test))]
 pub(super) async fn live_agent_response(
     content: &str,
+    preambles: &[preambles::PreambleBlock],
 ) -> Result<ConversationMessage, (StatusCode, String)> {
     let config_path = std::env::var_os("CONTEXT_AGENT_CONFIG").ok_or((
         StatusCode::SERVICE_UNAVAILABLE,
@@ -52,11 +53,27 @@ pub(super) async fn live_agent_response(
             "provider_policy_invalid: require an owning UUID and gpt-5-mini".to_string(),
         ));
     }
-    let policy = ProviderExecutionPolicy::for_fixture(
+    let mut policy = ProviderExecutionPolicy::for_fixture(
         PathBuf::from(ledger_path),
         PathBuf::from(evidence_root),
         session_id,
     );
+    if std::env::var_os("CONTEXT_AGENT_OBSERVE_PREAMBLES").is_some() && !preambles.is_empty() {
+        use agent_builder::{OutboundPreambleObservation, PreambleProbe};
+        let probes = preambles
+            .iter()
+            .map(|block| PreambleProbe::new(&block.id, format!("[preamble:{}]", block.id)))
+            .collect::<Result<Vec<_>, _>>();
+        let observation = probes
+            .and_then(OutboundPreambleObservation::new)
+            .map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "preamble_observation_invalid: repair server observation configuration".into(),
+                )
+            })?;
+        policy = policy.with_outbound_preamble_observation(observation);
+    }
     let executor = RigAgentExecutor::from_template_with_provider_execution(
         &config,
         &template,
@@ -71,6 +88,12 @@ pub(super) async fn live_agent_response(
             "provider_bridge_unavailable: inspect the owned MCP lifecycle receipts".to_string(),
         )
     })?;
+    let enabled = preambles::assembled(preambles);
+    let executor = if enabled.is_empty() {
+        executor
+    } else {
+        executor.with_preamble(format!("{}\n\n{enabled}", template.preamble))
+    };
     let (response, observed) = executor
         .execute_observed_with_endpoint(
             AgentRequest::new(content, 3),

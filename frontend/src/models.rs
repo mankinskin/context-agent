@@ -29,6 +29,7 @@ pub(super) struct MessageRequest {
     pub(super) agent_template_id: Option<String>,
     #[serde(default)]
     pub(super) prompt_sources: Vec<PromptSource>,
+    pub(super) choice_answer: Option<ChoiceAnswer>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -67,9 +68,37 @@ pub(super) struct ConversationMessage {
 #[derive(Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(super) enum RichTextBlock {
-    Paragraph { text: String },
-    Heading { level: u8, text: String },
-    BulletList { items: Vec<String> },
+    Paragraph {
+        text: String,
+    },
+    Heading {
+        level: u8,
+        text: String,
+    },
+    BulletList {
+        items: Vec<String>,
+    },
+    MultipleChoice {
+        widget_id: String,
+        options: Vec<String>,
+    },
+    ChoiceAnswer {
+        widget_id: String,
+        choice: String,
+    },
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub(super) struct ChoiceAnswer {
+    pub(super) widget_id: String,
+    pub(super) choice: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+pub(super) struct PreambleBlock {
+    pub(super) id: String,
+    pub(super) text: String,
+    pub(super) enabled: bool,
 }
 
 #[derive(Deserialize, Clone, Debug, PartialEq)]

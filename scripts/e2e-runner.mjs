@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { createOwnedRun as ownedRun, failure } from "./e2e-lifecycle.mjs";
 import { captureNativeBridge, snapshotSessionStores, verifyNativeBridge } from "./e2e-native.mjs";
 import { runSessionNavigation, verifySessionNavigation } from "./e2e-sessions.mjs";
+import { captureChoice, verifyChoice } from "./e2e-choice.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -48,11 +49,11 @@ function parseArgs(argv) {
     if (!options[name]) throw failure("INVALID_ARGUMENT", `invalid: --${name.replaceAll("_", "-")} is required`);
   }
   if (!["offline", "live"].includes(options.lane)) throw failure("INVALID_ARGUMENT", `invalid lane: ${options.lane}`);
-  if (!["baseline", "bridge", "sessions", "spine"].includes(options.scenario)) throw failure("UNSUPPORTED_SCENARIO", `unsupported scenario: ${options.scenario}`);
+  if (!["baseline", "bridge", "sessions", "spine", "choice", "choice-mcp", "all"].includes(options.scenario)) throw failure("UNSUPPORTED_SCENARIO", `unsupported scenario: ${options.scenario}`);
   mediaProjects(options.media);
   if (options.lane === "live" && options.media === "all") throw failure("INVALID_MEDIA", "live requires one origin media project");
-  if (options.lane === "live" && options.scenario !== "spine") throw failure("UNSUPPORTED_SCENARIO", "live requires scenario: spine");
-  if (options.lane === "offline" && options.scenario === "spine") throw failure("UNSUPPORTED_SCENARIO", "spine is a live-only scenario");
+  if (options.lane === "live" && !["spine", "choice-mcp"].includes(options.scenario)) throw failure("UNSUPPORTED_SCENARIO", "live requires scenario: spine or choice-mcp");
+  if (options.lane === "offline" && ["spine", "choice-mcp"].includes(options.scenario)) throw failure("UNSUPPORTED_SCENARIO", "spine and choice-mcp are live-only scenarios");
   return options;
 }
 
@@ -135,7 +136,7 @@ async function verifyArtifacts(root) {
     const events = (await readFile(join(runRoot, "events.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
     const requireEvidence = (condition, message) => { if (!condition) throw failure("ARTIFACT_INVALID", message); };
     requireEvidence(manifest.outcome === "passed" && manifest.run_id === basename(runRoot), "failed or mismatched run identity");
-    requireEvidence(["baseline", "bridge", "sessions"].includes(manifest.scenario) && manifest.lane === "offline", "missing lane/scenario");
+    requireEvidence(["baseline", "bridge", "sessions", "choice"].includes(manifest.scenario) && manifest.lane === "offline", "missing lane/scenario");
     requireEvidence(manifest.browser?.base_url === manifest.base_url && /^http:\/\/127\.0\.0\.1:\d+$/.test(manifest.base_url), "missing URL identity");
     requireEvidence(manifest.owned_pid === manifest.executable_identity?.pid && manifest.owned_pid > 0, "missing executable PID identity");
     requireEvidence(manifest.executable_identity?.sha256?.length === 64 && manifest.static_identity?.length === 64, "missing build identity");
@@ -160,6 +161,7 @@ async function verifyArtifacts(root) {
       && browserResult.stats.skipped === 0 && browserResult.stats.flaky === 0, "browser assertions did not complete");
     const screenshots = manifest.scenario === "bridge" ? ["bridge-before.png", "bridge-after.png"]
       : manifest.scenario === "sessions" ? ["sessions-before.png", "sessions-after.png"]
+      : manifest.scenario === "choice" ? ["choice-proof.png"]
       : manifest.media ? ["baseline-responsive.png"] : ["baseline-desktop.png", "baseline-narrow.png"];
     if (manifest.media) {
       requireEvidence(browserResult.config.projects.length === 1
@@ -171,6 +173,10 @@ async function verifyArtifacts(root) {
     requireEvidence(manifest.browser.artifacts.some((item) => item.path.endsWith("trace.zip"))
       && screenshots.every((name) => manifest.browser.artifacts.some((item) => item.path.endsWith(name))), "missing browser evidence");
     const nativeFiles = [];
+    if (manifest.scenario === "choice") {
+      requireEvidence(JSON.stringify(await verifyChoice(runRoot, false)) === JSON.stringify(manifest.choice.observed), "choice read-back differs");
+      nativeFiles.push(...manifest.choice.files);
+    }
     if (manifest.scenario === "sessions") {
       requireEvidence(assertions.some(item => item.criterion === "APP-03"), "missing session navigation criterion");
       nativeFiles.push(...await verifySessionNavigation(runRoot, manifest, cleanup, events));
@@ -278,7 +284,7 @@ async function runBaseline(options) {
     }
     await run.event({ kind: "server_ready", pid: server.record.pid, base_url: baseUrl });
     const restartScenario = ["bridge", "sessions"].includes(options.scenario);
-    const runBrowser = (phase) => run.spawn(process.execPath, [cli, "test", options.scenario === "bridge" ? "bridge.spec.ts" : options.scenario === "sessions" ? "sessions.spec.ts" : "baseline.spec.ts", "--config", "playwright.config.ts", "--reporter=list,json", "--output", join(run.runRoot, phase === "before" ? "browser-before" : "browser")], {
+    const runBrowser = (phase) => run.spawn(process.execPath, [cli, "test", options.scenario === "choice" ? "choice.spec.ts" : options.scenario === "bridge" ? "bridge.spec.ts" : options.scenario === "sessions" ? "sessions.spec.ts" : "baseline.spec.ts", "--config", "playwright.config.ts", "--reporter=list,json", "--output", join(run.runRoot, phase === "before" ? "browser-before" : "browser")], {
       cwd: join(repositoryRoot, "frontend", "e2e"), env: { BASE_URL: baseUrl, E2E_MEDIA: JSON.stringify(options.project), BRIDGE_PHASE: phase, SESSIONS_CONTROL_ROOT: run.runRoot, PLAYWRIGHT_JSON_OUTPUT_FILE: join(run.runRoot, phase === "before" ? "browser-before-result.json" : "browser-result.json") }, timeoutMs: remaining(), role: `browser-${phase}`,
     });
     const restart = async () => {
@@ -304,6 +310,7 @@ async function runBaseline(options) {
       browser = await runBrowser(restartScenario ? "after" : "baseline");
     }
     run.manifest.browser = { pid: browser.pid, base_url: baseUrl, artifacts: await artifacts(join(run.runRoot, "browser")) };
+    if (options.scenario === "choice") run.manifest.choice = await captureChoice(nativeStore, run.runRoot);
     if (restartScenario) {
       if (options.scenario === "bridge") {
         run.manifest.browser.artifacts.push(...await artifacts(join(run.runRoot, "browser-before")));
@@ -358,7 +365,7 @@ async function main() {
   try {
     const options = parseArgs(process.argv.slice(2));
     if (options.help) {
-      console.log("Usage: --lane offline|live --scenario baseline|bridge|sessions|spine --media all|desktop|mobile|tablet --artifact-root <path> --budget-ledger <path>\n--verify-artifacts <run-path> reads prior evidence only; --help\nMedia defaults to desktop for existing callers. Offline all runs five isolated cases sequentially; live rejects all, submits once at origin then inspects retained results without submission.");
+      console.log("Usage: --lane offline|live --scenario baseline|bridge|sessions|choice|choice-mcp|spine|all --media all|desktop|mobile|tablet --artifact-root <path> --budget-ledger <path>\n--verify-artifacts <run-path> reads prior evidence only; --help\nMedia defaults to desktop. Offline scenario all runs baseline/bridge/sessions/choice in each selected media. Live submits at origin only, then inspects retained results without submission.");
     } else if (options.verify_artifacts) {
       await verifyArtifacts(options.verify_artifacts);
       console.log("artifact verification passed");
@@ -366,7 +373,9 @@ async function main() {
       if (options.lane === "live") {
         await (await import("./e2e-live.mjs")).runLive(options);
       } else {
-        for (const project of mediaProjects(options.media)) await runBaseline({ ...options, project });
+        for (const scenario of options.scenario === "all" ? ["baseline", "bridge", "sessions", "choice"] : [options.scenario]) {
+          for (const project of mediaProjects(options.media)) await runBaseline({ ...options, scenario, project });
+        }
       }
       console.log(`${options.lane} ${options.scenario} passed`);
     }

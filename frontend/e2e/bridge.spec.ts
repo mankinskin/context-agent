@@ -1,11 +1,14 @@
 import { test, expect } from "@playwright/test";
+import { openSessions, primaryAction } from "./responsive";
 
 test("native session and submitted input survive an owned backend restart", async ({ page, browser }, testInfo) => {
   await testInfo.attach("browser-version", { body: browser.version(), contentType: "text/plain" });
   await page.goto("/");
   const tabs = page.locator(".editor-tabs").getByRole("button", { name: /^Session / });
   if (process.env.BRIDGE_PHASE === "before") {
-    await page.getByRole("button", { name: "New session", exact: true }).click();
+    await openSessions(page, testInfo);
+    await primaryAction(page.getByRole("button", { name: "New session", exact: true }), testInfo);
+    if ((page.viewportSize()?.width ?? 1440) <= 900) await page.getByRole("button", { name: "Close sessions" }).click();
     await expect(tabs).toHaveCount(1);
     await page.getByRole("textbox", { name: "Message", exact: true }).fill("offline native persistence proof");
     await page.getByRole("button", { name: /^Send/ }).click();

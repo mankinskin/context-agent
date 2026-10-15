@@ -19,6 +19,10 @@ fn App() -> Element {
     let timeline = use_signal(|| None::<Result<TimelineResponse, String>>);
     let credits = use_signal(|| None::<Result<CreditUsage, String>>);
     let lifecycle_status = use_signal(|| None::<Result<String, String>>);
+    use_context_provider(|| choices::ChoiceContext {
+        session: session_id,
+        timeline,
+    });
     let action_session_id = session_id;
     let action_result = timeline;
     let session_list = sessions;
@@ -193,6 +197,7 @@ fn App() -> Element {
                         }
                     }
                     div { class: "conversation-scroll",
+                        preambles::PreambleEditor {}
                         div { class: "conversation-header",
                             span { class: "eyebrow", "ACTIVE THREAD" }
                             h1 { "Münster weather" }
@@ -205,7 +210,7 @@ fn App() -> Element {
                                         div { class: "empty-state", p { "No messages in this session yet." } }
                                     }
                                     for event in timeline.events.iter() {
-                                        if let Some(message) = event.message.clone() {
+                                        if let Some(message) = event.message.clone().filter(|message| message.role != "tool") {
                                             ConversationEntry { message, sequence: event.sequence }
                                         }
                                     }
@@ -222,6 +227,7 @@ fn App() -> Element {
                         }
                     }
                     div { class: "composer",
+                        choices::ChoiceStart {}
                         div { class: "composer-input",
                             input {
                                 aria_label: "Message",
@@ -318,5 +324,7 @@ mod client;
 use client::*;
 mod conversation;
 use conversation::*;
+mod choices;
 mod navigation;
+mod preambles;
 mod shell;

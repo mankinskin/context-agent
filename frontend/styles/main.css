@@ -31,6 +31,16 @@ html, body, #main { width: 100%; height: 100%; margin: 0; }
 body { overflow: hidden; color: var(--text-primary); background: var(--area-canvas); }
 button, input { font: inherit; }
 button { color: inherit; }
+.preamble-editor { min-width: 0; padding: 12px; border-bottom: 1px solid var(--edge-default); overflow-wrap: anywhere; }
+.preamble-editor summary { min-height: 44px; cursor: pointer; }
+.preamble-editor label { display: flex; flex-direction: column; min-width: 0; margin-block: 8px; }
+.preamble-editor input:not([type=checkbox]), .preamble-editor textarea { width: 100%; min-height: 44px; font: inherit; }
+.preamble-editor .preamble-row { flex-direction: row; align-items: center; min-height: 44px; gap: 8px; }
+.choice-widget { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.choice-option { display: flex; align-items: center; gap: 8px; min-width: 44px; min-height: 44px; cursor: pointer; }
+.choice-widget button, .preamble-editor button, .composer .secondary-button { min-width: 44px; min-height: 44px; }
+.composer { min-width: 0; }
+.composer .error-text { min-width: 0; overflow-wrap: anywhere; }
 
 .app-shell {
   display: grid;
