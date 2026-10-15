@@ -32,6 +32,12 @@ pub(super) fn hydrate_sessions(state: &AppState) -> Result<(), (StatusCode, Stri
                 (StatusCode::INTERNAL_SERVER_ERROR, "session_event_unreadable".to_string())
             }))
             .collect::<Result<Vec<_>, _>>()?;
+        let usage = events
+            .iter()
+            .rev()
+            .filter_map(|event| event.message.as_ref()?.usage.clone())
+            .next()
+            .unwrap_or_default();
         restored.insert(
             record.session_id,
             Session {
@@ -50,7 +56,7 @@ pub(super) fn hydrate_sessions(state: &AppState) -> Result<(), (StatusCode, Stri
                     .to_string(),
                 created_at: record.started_at,
                 events,
-                usage: Usage::default(),
+                usage,
             },
         );
     }

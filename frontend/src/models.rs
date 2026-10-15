@@ -44,8 +44,8 @@ pub(super) struct TimelineResponse {
 
 #[derive(Deserialize, Clone)]
 pub(super) struct CreditUsage {
-    pub(super) input_tokens: u64,
-    pub(super) output_tokens: u64,
+    pub(super) input_tokens: Option<u64>,
+    pub(super) output_tokens: Option<u64>,
     pub(super) missing_telemetry: Vec<String>,
 }
 

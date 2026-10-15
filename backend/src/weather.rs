@@ -73,6 +73,7 @@ pub(super) fn weather_message(observation: &WeatherObservation) -> ConversationM
     };
 
     ConversationMessage {
+        usage: None,
         role: "assistant".to_string(),
         blocks: vec![
             RichTextBlock::Heading {

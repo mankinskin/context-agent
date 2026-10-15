@@ -9,10 +9,10 @@ pub(super) struct Session {
     pub(super) usage: Usage,
 }
 
-#[derive(Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
 pub(super) struct Usage {
-    pub(super) input_tokens: u64,
-    pub(super) output_tokens: u64,
+    pub(super) input_tokens: Option<u64>,
+    pub(super) output_tokens: Option<u64>,
     pub(super) cache_read_tokens: Option<u64>,
     pub(super) cache_write_tokens: Option<u64>,
 }
@@ -60,6 +60,8 @@ pub struct ConversationMessage {
     pub role: String,
     pub blocks: Vec<RichTextBlock>,
     pub tool_calls: Vec<ToolCall>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) usage: Option<Usage>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -133,8 +135,8 @@ pub struct SessionSummary {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CreditUsage {
     pub provider_model_id: Option<String>,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
     pub cache_read_tokens: Option<u64>,
     pub cache_write_tokens: Option<u64>,
     pub known_cost: Option<f64>,

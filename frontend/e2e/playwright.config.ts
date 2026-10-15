@@ -1,5 +1,8 @@
 import { defineConfig } from "@playwright/test";
 
+const media = process.env.E2E_MEDIA
+  ? JSON.parse(process.env.E2E_MEDIA)
+  : { name: "desktop", viewport: { width: 1440, height: 900 }, hasTouch: false, isMobile: false };
 export default defineConfig({
   testDir: ".",
   timeout: 30_000,
@@ -9,4 +12,11 @@ export default defineConfig({
     trace: "on",
   },
   reporter: "list",
+  workers: 1,
+  retries: 0,
+  projects: [{
+    name: media.name,
+    use: { browserName: "chromium", viewport: media.viewport, hasTouch: media.hasTouch, isMobile: media.isMobile },
+    metadata: { ...media, emulation: "Chromium; not physical device or iOS" },
+  }],
 });

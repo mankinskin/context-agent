@@ -8,15 +8,31 @@ import { captureNativeBridge, snapshotSessionStores, verifyNativeBridge } from "
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
-const fileHash = async (path) => hash(await readFile(path));
+export const fileHash = async (path) => hash(await readFile(path));
 export const createOwnedRun = (options) => ownedRun({ cwd: repositoryRoot, ...options });
+
+const mediaMatrix = [
+  { name: "desktop", viewport: { width: 1440, height: 900 }, isMobile: false, hasTouch: false, input: "mouse-keyboard", orientation: "landscape" },
+  { name: "mobile-portrait", viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, input: "touch", orientation: "portrait" },
+  { name: "mobile-landscape", viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true, input: "touch", orientation: "landscape" },
+  { name: "tablet-portrait", viewport: { width: 768, height: 1024 }, isMobile: true, hasTouch: true, input: "touch", orientation: "portrait" },
+  { name: "tablet-landscape", viewport: { width: 1024, height: 768 }, isMobile: true, hasTouch: true, input: "touch", orientation: "landscape" },
+];
+
+export function mediaProjects(media) {
+  if (media === "all") return mediaMatrix;
+  if (media === "desktop") return [mediaMatrix[0]];
+  if (media === "mobile") return mediaMatrix.slice(1, 3);
+  if (media === "tablet") return mediaMatrix.slice(3);
+  throw failure("INVALID_MEDIA", `invalid media: ${media}`);
+}
 
 function parseArgs(argv) {
   const options = {};
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--help") return { help: true };
-    if (!["--lane", "--scenario", "--artifact-root", "--budget-ledger", "--verify-artifacts"].includes(arg)) {
+    if (!["--lane", "--scenario", "--media", "--artifact-root", "--budget-ledger", "--verify-artifacts"].includes(arg)) {
       throw failure("INVALID_ARGUMENT", `unknown argument: ${arg}`);
     }
     const value = argv[++index];
@@ -26,12 +42,16 @@ function parseArgs(argv) {
     options[key] = value;
   }
   if (options.verify_artifacts) return options;
+  options.media ??= "desktop";
   for (const name of ["lane", "scenario", "artifact_root", "budget_ledger"]) {
     if (!options[name]) throw failure("INVALID_ARGUMENT", `invalid: --${name.replaceAll("_", "-")} is required`);
   }
   if (!["offline", "live"].includes(options.lane)) throw failure("INVALID_ARGUMENT", `invalid lane: ${options.lane}`);
-  if (!["baseline", "bridge"].includes(options.scenario)) throw failure("UNSUPPORTED_SCENARIO", `unsupported scenario: ${options.scenario}`);
-  if (options.lane !== "offline") throw failure("UNSUPPORTED_LANE", "unsupported lane: live is not implemented");
+  if (!["baseline", "bridge", "spine"].includes(options.scenario)) throw failure("UNSUPPORTED_SCENARIO", `unsupported scenario: ${options.scenario}`);
+  mediaProjects(options.media);
+  if (options.lane === "live" && options.media === "all") throw failure("INVALID_MEDIA", "live requires one origin media project");
+  if (options.lane === "live" && options.scenario !== "spine") throw failure("UNSUPPORTED_SCENARIO", "live requires scenario: spine");
+  if (options.lane === "offline" && options.scenario === "spine") throw failure("UNSUPPORTED_SCENARIO", "spine is a live-only scenario");
   return options;
 }
 
@@ -60,7 +80,7 @@ export async function waitForReady(baseUrl, { timeoutMs = 30_000, intervalMs = 2
   throw failure("READINESS_TIMEOUT", `readiness deadline exceeded: ${lastError?.message ?? "no response"}`);
 }
 
-async function freePort() {
+export async function freePort() {
   return new Promise((resolvePort, reject) => {
     const probe = createServer();
     probe.once("error", reject);
@@ -71,7 +91,7 @@ async function freePort() {
   });
 }
 
-async function provisionFixtures(run) {
+export async function provisionFixtures(run) {
   const body = join(run.fixtureRoot, "synthetic-body.md");
   await mkdir(run.manifest.store_root);
   await writeFile(body, "workflow-proof-29ad8d96\n");
@@ -93,7 +113,7 @@ async function provisionFixtures(run) {
   await run.event({ kind: "fixtures_verified", ...run.manifest.fixture_proof });
 }
 
-async function artifacts(root) {
+export async function artifacts(root) {
   const entries = await readdir(root, { recursive: true, withFileTypes: true });
   const files = [];
   for (const entry of entries) {
@@ -110,6 +130,7 @@ async function verifyArtifacts(root) {
   try {
     const read = async (name) => JSON.parse(await readFile(join(runRoot, name), "utf8"));
     const [manifest, assertions, cleanup] = await Promise.all(["manifest.json", "assertions.json", "cleanup.json"].map(read));
+    if (manifest.lane === "live") return (await import("./e2e-live.mjs")).verifyLiveArtifacts(runRoot);
     const events = (await readFile(join(runRoot, "events.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
     const requireEvidence = (condition, message) => { if (!condition) throw failure("ARTIFACT_INVALID", message); };
     requireEvidence(manifest.outcome === "passed" && manifest.run_id === basename(runRoot), "failed or mismatched run identity");
@@ -136,7 +157,15 @@ async function verifyArtifacts(root) {
     const browserResult = await read("browser-result.json");
     requireEvidence(browserResult.stats.expected === 1 && browserResult.stats.unexpected === 0
       && browserResult.stats.skipped === 0 && browserResult.stats.flaky === 0, "browser assertions did not complete");
-    const screenshots = manifest.scenario === "bridge" ? ["bridge-before.png", "bridge-after.png"] : ["baseline-desktop.png", "baseline-narrow.png"];
+    const screenshots = manifest.scenario === "bridge" ? ["bridge-before.png", "bridge-after.png"]
+      : manifest.media ? ["baseline-responsive.png"] : ["baseline-desktop.png", "baseline-narrow.png"];
+    if (manifest.media) {
+      requireEvidence(browserResult.config.projects.length === 1
+        && browserResult.config.projects[0].name === manifest.media.name
+        && JSON.stringify(browserResult.config.projects[0].metadata.viewport) === JSON.stringify(manifest.media.viewport)
+        && browserResult.config.projects[0].metadata.hasTouch === manifest.media.hasTouch
+        && browserResult.config.projects[0].metadata.isMobile === manifest.media.isMobile, "missing genuine media context");
+    }
     requireEvidence(manifest.browser.artifacts.some((item) => item.path.endsWith("trace.zip"))
       && screenshots.every((name) => manifest.browser.artifacts.some((item) => item.path.endsWith(name))), "missing browser evidence");
     const nativeFiles = [];
@@ -181,6 +210,7 @@ async function runBaseline(options) {
     runId: randomUUID(), lane: options.lane, scenario: options.scenario });
   console.log(`run_id=${run.manifest.run_id} artifacts=${run.runRoot}`);
   let error, scenarioStart, deadline;
+  run.manifest.media = options.project;
   try {
     const ledgerBefore = await readFile(options.budget_ledger);
     const ledger = JSON.parse(ledgerBefore);
@@ -242,7 +272,7 @@ async function runBaseline(options) {
     }
     await run.event({ kind: "server_ready", pid: server.record.pid, base_url: baseUrl });
     const runBrowser = (phase) => run.spawn(process.execPath, [cli, "test", options.scenario === "bridge" ? "bridge.spec.ts" : "baseline.spec.ts", "--config", "playwright.config.ts", "--reporter=list,json", "--output", join(run.runRoot, phase === "before" ? "browser-before" : "browser")], {
-      cwd: join(repositoryRoot, "frontend", "e2e"), env: { BASE_URL: baseUrl, BRIDGE_PHASE: phase, PLAYWRIGHT_JSON_OUTPUT_FILE: join(run.runRoot, phase === "before" ? "browser-before-result.json" : "browser-result.json") }, timeoutMs: remaining(), role: `browser-${phase}`,
+      cwd: join(repositoryRoot, "frontend", "e2e"), env: { BASE_URL: baseUrl, E2E_MEDIA: JSON.stringify(options.project), BRIDGE_PHASE: phase, PLAYWRIGHT_JSON_OUTPUT_FILE: join(run.runRoot, phase === "before" ? "browser-before-result.json" : "browser-result.json") }, timeoutMs: remaining(), role: `browser-${phase}`,
     });
     if (options.scenario === "bridge") {
       await runBrowser("before");
@@ -309,12 +339,16 @@ async function main() {
   try {
     const options = parseArgs(process.argv.slice(2));
     if (options.help) {
-      console.log("Usage: --lane offline|live --scenario baseline|bridge --artifact-root <path> --budget-ledger <path>\n--verify-artifacts <run-path> reads prior evidence only; --help\nOnly offline baseline and bridge scenarios are implemented; live fails explicitly.");
+      console.log("Usage: --lane offline|live --scenario baseline|bridge|spine --media all|desktop|mobile|tablet --artifact-root <path> --budget-ledger <path>\n--verify-artifacts <run-path> reads prior evidence only; --help\nMedia defaults to desktop for existing callers. Offline all runs five isolated cases sequentially; live rejects all, submits once at origin then inspects retained results without submission.");
     } else if (options.verify_artifacts) {
       await verifyArtifacts(options.verify_artifacts);
       console.log("artifact verification passed");
     } else {
-      await runBaseline(options);
+      if (options.lane === "live") {
+        await (await import("./e2e-live.mjs")).runLive(options);
+      } else {
+        for (const project of mediaProjects(options.media)) await runBaseline({ ...options, project });
+      }
       console.log(`${options.lane} ${options.scenario} passed`);
     }
   } catch (error) {
@@ -323,4 +357,9 @@ async function main() {
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) await main();
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch(error => {
+    console.error(`${error.code ?? "RUNNER_FAILED"}: ${error.message}`);
+    process.exitCode = 1;
+  });
+}

@@ -11,18 +11,21 @@ fn main() {
 #[component]
 fn App() -> Element {
     let mut input = use_signal(String::new);
+    let mut panel = use_signal(|| "conversation");
+    use_effect(shell::install_focus_guard);
+    use_drop(shell::remove_focus_guard);
     let session_id = use_signal(|| None::<String>);
     let sessions = use_signal(Vec::<SessionSummary>::new);
     let timeline = use_signal(|| None::<Result<TimelineResponse, String>>);
     let credits = use_signal(|| None::<Result<CreditUsage, String>>);
     let lifecycle_status = use_signal(|| None::<Result<String, String>>);
-    let action_session_id = session_id.clone();
-    let mut action_result = timeline.clone();
-    let session_list = sessions.clone();
+    let action_session_id = session_id;
+    let mut action_result = timeline;
+    let session_list = sessions;
 
     let refresh_sessions = move |_| {
-        let mut session_list = session_list.clone();
-        let mut active_session = action_session_id.clone();
+        let mut session_list = session_list;
+        let mut active_session = action_session_id;
         async move {
             match list_sessions().await {
                 Ok(list) => {
@@ -39,9 +42,9 @@ fn App() -> Element {
     };
 
     let create_new_session = move |_| {
-        let mut session_list = session_list.clone();
-        let mut active_session = action_session_id.clone();
-        let mut timeline_result = action_result.clone();
+        let mut session_list = session_list;
+        let mut active_session = action_session_id;
+        let mut timeline_result = action_result;
         async move {
             match create_session().await {
                 Ok(id) => {
@@ -59,8 +62,8 @@ fn App() -> Element {
 
     let send = move |_| {
         let message = input();
-        let mut session = action_session_id.clone();
-        let mut result = action_result.clone();
+        let mut session = action_session_id;
+        let mut result = action_result;
         async move {
             let current_session = match session() {
                 Some(id) => id,
@@ -77,12 +80,8 @@ fn App() -> Element {
             };
             match send_message(&current_session, message).await {
                 Ok(_response) => {
-                    result.set(Some(
-                        load_timeline(&current_session)
-                            .await
-                            .map(|timeline| timeline),
-                    ));
-                    let mut session_list = session_list.clone();
+                    result.set(Some(load_timeline(&current_session).await));
+                    let mut session_list = session_list;
                     match list_sessions().await {
                         Ok(list) => session_list.set(list),
                         Err(error) => result.set(Some(Err(error))),
@@ -94,7 +93,7 @@ fn App() -> Element {
     };
 
     rsx! {
-        div { class: "app-shell",
+        div { class: "app-shell panel-{panel}",
             header { class: "titlebar",
                 div { class: "brand-mark", "CA" }
                 div { class: "titlebar-copy",
@@ -102,14 +101,19 @@ fn App() -> Element {
                     span { "Weather workspace" }
                 }
                 div { class: "titlebar-actions",
+                    button { class: "panel-toggle", aria_label: "Show sessions", aria_controls: "session-navigation",
+                        aria_expanded: panel() == "sessions", onclick: move |_| panel.set(if panel() == "sessions" { "conversation" } else { "sessions" }), "Sessions" }
+                    button { class: "panel-toggle", aria_label: "Show inspector", aria_controls: "run-inspector",
+                        aria_expanded: panel() == "inspector", onclick: move |_| panel.set(if panel() == "inspector" { "conversation" } else { "inspector" }), "Inspector" }
                     span { class: "signal signal-success", "Connected" }
                     button { class: "icon-button", aria_label: "Refresh sessions", title: "Refresh sessions", onclick: refresh_sessions, "↻" }
                 }
             }
             main { class: "workspace",
-                aside { class: "session-rail",
+                aside { class: "session-rail", id: "session-navigation", aria_label: "Session navigation",
                     div { class: "pane-heading",
                         span { "SESSIONS" }
+                        button { class: "panel-toggle", aria_label: "Close sessions", onclick: move |_| { panel.set("conversation"); shell::focus_composer(); }, "Close" }
                         button { class: "icon-button", aria_label: "New session", title: "New session", onclick: create_new_session, "+" }
                     }
                     div { class: "session-list",
@@ -118,11 +122,13 @@ fn App() -> Element {
                                 session: session.clone(),
                                 is_active: action_session_id() == Some(session.session_id.clone()),
                                 on_select: move |session_id: String| {
-                                    let mut selected = action_session_id.clone();
-                                    let mut result = action_result.clone();
+                                    let mut selected = action_session_id;
+                                    let mut result = action_result;
                                     async move {
                                         selected.set(Some(session_id.clone()));
                                         result.set(Some(load_timeline(&session_id).await));
+                                        panel.set("conversation");
+                                        shell::focus_composer();
                                     }
                                 },
                             }
@@ -142,8 +148,8 @@ fn App() -> Element {
                                     session: session.clone(),
                                     is_active: action_session_id() == Some(session.session_id.clone()),
                                     on_select: move |session_id: String| {
-                                        let mut selected = action_session_id.clone();
-                                        let mut result = action_result.clone();
+                                        let mut selected = action_session_id;
+                                        let mut result = action_result;
                                         async move {
                                             selected.set(Some(session_id.clone()));
                                             result.set(Some(load_timeline(&session_id).await));
@@ -209,8 +215,10 @@ fn App() -> Element {
                         }
                     }
                 }
-                aside { class: "inspector-pane",
-                    div { class: "pane-heading", span { "RUN INSPECTOR" } }
+                aside { class: "inspector-pane", id: "run-inspector", aria_label: "Run inspector",
+                    div { class: "pane-heading", span { "RUN INSPECTOR" }
+                        button { class: "panel-toggle", aria_label: "Close inspector", onclick: move |_| { panel.set("conversation"); shell::focus_composer(); }, "Close" }
+                    }
                     section { class: "inspector-section",
                         span { class: "eyebrow", "SESSION" }
                         dl {
@@ -224,10 +232,12 @@ fn App() -> Element {
                         match credits.read().clone() {
                             Some(Ok(usage)) => {
                                 let missing = usage.missing_telemetry.join(", ");
+                                let input = usage.input_tokens.map(|n| n.to_string()).unwrap_or_else(|| "unknown".to_string());
+                                let output = usage.output_tokens.map(|n| n.to_string()).unwrap_or_else(|| "unknown".to_string());
                                 rsx! {
                                     dl {
-                                        dt { "Input" } dd { "{usage.input_tokens}" }
-                                        dt { "Output" } dd { "{usage.output_tokens}" }
+                                        dt { "Input (last observed)" } dd { "{input}" }
+                                        dt { "Output (last observed)" } dd { "{output}" }
                                         dt { "Missing" } dd { "{missing}" }
                                     }
                                 }
@@ -239,7 +249,7 @@ fn App() -> Element {
                             class: "secondary-button",
                             onclick: move |_| {
                                 let id = action_session_id();
-                                let mut credits = credits.clone();
+                                let mut credits = credits;
                                 async move {
                                     if let Some(id) = id { credits.set(Some(load_credits(&id).await)); }
                                 }
@@ -258,7 +268,7 @@ fn App() -> Element {
                             class: "secondary-button",
                             onclick: move |_| {
                                 let id = action_session_id();
-                                let mut lifecycle_status = lifecycle_status.clone();
+                                let mut lifecycle_status = lifecycle_status;
                                 async move {
                                     if let Some(id) = id { lifecycle_status.set(Some(lifecycle(&id).await)); }
                                 }
@@ -283,3 +293,4 @@ mod client;
 use client::*;
 mod conversation;
 use conversation::*;
+mod shell;

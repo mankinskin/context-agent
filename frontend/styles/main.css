@@ -1,5 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap");
-
 :root {
   color-scheme: light;
   font-family: "Manrope", sans-serif;
@@ -65,17 +63,17 @@ button { color: inherit; }
 .titlebar-copy span { color: var(--text-muted); font-size: 10px; line-height: 12px; }
 .titlebar-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 
-.workspace { display: grid; grid-template-columns: 232px minmax(420px, 1fr) 288px; min-height: 0; }
+.workspace { position: relative; display: grid; grid-template-columns: 210px minmax(0, 1fr) 260px; min-height: 0; }
 .session-rail, .editor-pane, .inspector-pane { min-width: 0; min-height: 0; background: var(--area-panel); }
 .session-rail { display: flex; flex-direction: column; border-right: 1px solid var(--edge-subtle); }
 .inspector-pane { overflow-y: auto; border-left: 1px solid var(--edge-subtle); background: var(--area-panel-muted); }
-.editor-pane { display: grid; grid-template-rows: 38px minmax(0, 1fr) auto; }
+.editor-pane { display: grid; grid-template-rows: 52px minmax(0, 1fr) auto; }
 
 .pane-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 38px;
+  min-height: 52px;
   padding: 0 10px 0 12px;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--edge-subtle);
@@ -84,8 +82,8 @@ button { color: inherit; }
 .icon-button {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 44px;
+  height: 44px;
   padding: 0;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -101,7 +99,7 @@ button { color: inherit; }
   align-items: center;
   gap: 8px;
   width: 100%;
-  min-height: 34px;
+  min-height: 44px;
   padding: 6px 8px;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -140,7 +138,7 @@ button { color: inherit; }
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 30px;
+  min-height: 44px;
   margin: 4px 6px 3px 4px;
   padding: 0 9px;
   border: 1px solid var(--edge-default);
@@ -184,6 +182,7 @@ button { color: inherit; }
 .tool-call code, .inspector-section code { font: 500 10px/1.4 "IBM Plex Mono", monospace; }
 .tool-call p { margin: 7px 0 3px; color: var(--text-secondary); font-size: 10px; }
 .tool-call-id { color: var(--text-muted); font: 400 9px/1 "IBM Plex Mono", monospace; }
+.tool-call p, .tool-call-id, .rich-text { overflow-wrap: anywhere; }
 .tool-icon { color: var(--accent); }
 
 .signal { display: inline-flex; align-items: center; width: fit-content; padding: 3px 6px; border-radius: 999px; font: 500 9px/1 "IBM Plex Mono", monospace; }
@@ -215,18 +214,27 @@ button { color: inherit; }
 .inspector-section p { font-size: 10px; line-height: 1.55; }
 .secondary-button { padding: 6px 9px; border-color: var(--edge-default); background: var(--area-panel); font-size: 10px; }
 .secondary-button:hover { background: var(--area-hover); }
+.send-button, .secondary-button { min-width: 44px; min-height: 44px; }
+.panel-toggle { display: none; min-width: 44px; min-height: 44px; border: 1px solid var(--edge-default); border-radius: 6px; background: var(--area-panel); cursor: pointer; font-size: 11px; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 .statusbar { justify-content: flex-end; gap: 18px; padding: 0 10px; border-top: 1px solid var(--edge-subtle); color: var(--text-muted); font: 400 9px/1 "IBM Plex Mono", monospace; }
 
 @media (max-width: 900px) {
-  .workspace { grid-template-columns: 190px minmax(360px, 1fr); }
-  .inspector-pane { display: none; }
+  .workspace { grid-template-columns: minmax(0, 1fr); }
+  .panel-toggle { display: block; }
+  .session-rail, .inspector-pane { display: none; position: absolute; inset: 0; z-index: 2; overflow-y: auto; }
+  .panel-sessions .session-rail { display: flex; }
+  .panel-inspector .inspector-pane { display: block; }
+  .panel-sessions .editor-pane, .panel-inspector .editor-pane { visibility: hidden; }
 }
 
 @media (max-width: 640px) {
   .workspace { grid-template-columns: 1fr; }
-  .session-rail { display: none; }
-  .editor-pane { grid-template-rows: 38px minmax(0, 1fr) auto; }
+  .brand-mark, .titlebar-copy span { display: none; }
+  .titlebar { padding: 0 6px; gap: 6px; }
+  .titlebar-actions { gap: 4px; }
+  .titlebar-copy strong { font-size: 11px; }
   .conversation-header { padding: 24px 18px 16px; }
   .message-stream { padding: 0 18px 28px; }
   .composer { padding: 9px; }

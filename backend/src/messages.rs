@@ -100,6 +100,7 @@ pub(super) async fn create_message(
             None,
             Vec::new(),
             Some(ConversationMessage {
+                usage: None,
                 role: "user".to_string(),
                 blocks: vec![RichTextBlock::Paragraph { text: user_content }],
                 tool_calls: Vec::new(),
@@ -150,6 +151,24 @@ pub(super) async fn create_message(
     completed.sequence = session.events.len() as u64;
     match &result {
         Ok(message) => {
+            for tool in &message.tool_calls {
+                let mut event = completed.clone();
+                event.event_id = next_id("event");
+                event.sequence = session.events.len() as u64;
+                event.evidence_kind = EvidenceKind::ToolCall;
+                event.tool_call_id = Some(tool.tool_call_id.clone());
+                event.provider_model_id =
+                    (tool.tool_name == "get_ticket").then(|| "gpt-5-mini".to_string());
+                event.message = Some(ConversationMessage {
+                    role: "tool".to_string(),
+                    blocks: Vec::new(),
+                    tool_calls: vec![tool.clone()],
+                    usage: None,
+                });
+                session.events.push(event);
+            }
+            completed.sequence = session.events.len() as u64;
+            completed.provider_model_id = message.usage.as_ref().map(|_| "gpt-5-mini".to_string());
             completed.evidence_kind = EvidenceKind::ModelResponse;
             completed.message = Some(message.clone());
         }
@@ -181,6 +200,7 @@ async fn execute_message(
     {
         let _ = state.live;
         Ok(ConversationMessage {
+            usage: None,
             role: "assistant".to_string(),
             blocks: vec![RichTextBlock::Paragraph {
                 text: format!("Test executor response: {}", redact_content(content)),

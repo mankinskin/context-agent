@@ -1,7 +1,7 @@
 #[cfg(not(test))]
 use agent_builder::provider::ProviderExecutionPolicy;
 #[cfg(not(test))]
-use agent_builder::{AgentExecutor, AgentRequest, AgentTemplate, Config, RigAgentExecutor};
+use agent_builder::{AgentRequest, AgentTemplate, Config, RigAgentExecutor};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -253,7 +253,13 @@ async fn get_credits(
     let session = sessions
         .get(&session_id)
         .ok_or((StatusCode::NOT_FOUND, "session not found".to_string()))?;
-    let mut missing = vec!["input_tokens".to_string(), "output_tokens".to_string()];
+    let mut missing = Vec::new();
+    if session.usage.input_tokens.is_none() {
+        missing.push("input_tokens".to_string());
+    }
+    if session.usage.output_tokens.is_none() {
+        missing.push("output_tokens".to_string());
+    }
     if session.usage.cache_read_tokens.is_none() {
         missing.push("cache_read_tokens".to_string());
     }

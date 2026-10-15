@@ -80,6 +80,7 @@ test("help exposes the owned-runner interface without starting services", () => 
   assert.match(result.stdout, /--scenario/);
   assert.match(result.stdout, /--artifact-root/);
   assert.match(result.stdout, /--budget-ledger/);
+  assert.match(result.stdout, /--media all\|desktop\|mobile\|tablet/);
   assert.match(result.stdout, /--verify-artifacts/);
 });
 
@@ -87,6 +88,8 @@ for (const args of [
   ["--lane", "invalid"],
   ["--lane", "offline", "--scenario", "not-implemented"],
   ["--unexpected-flag"],
+  ["--lane", "live", "--scenario", "spine", "--media", "all", "--artifact-root", "synthetic", "--budget-ledger", "synthetic"],
+  ["--lane", "offline", "--scenario", "baseline", "--media", "watch", "--artifact-root", "synthetic", "--budget-ledger", "synthetic"],
 ]) {
   test(`invalid arguments fail before builds: ${args.join(" ")}`, () => {
     const result = spawnSync(process.execPath, [runnerPath, ...args], {
@@ -98,6 +101,22 @@ for (const args of [
     assert.match(result.stderr, /invalid|unknown|unsupported|unrecognized/i);
   });
 }
+
+test("media projects declare the required viewport, input, and orientation matrix", async () => {
+  const { mediaProjects } = await runner();
+  assert.deepEqual(mediaProjects("desktop"), [{
+    name: "desktop", viewport: { width: 1440, height: 900 }, isMobile: false, hasTouch: false, input: "mouse-keyboard", orientation: "landscape",
+  }]);
+  assert.deepEqual(mediaProjects("mobile").map(({ name, viewport, hasTouch, isMobile }) => ({ name, viewport, hasTouch, isMobile })), [
+    { name: "mobile-portrait", viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true },
+    { name: "mobile-landscape", viewport: { width: 844, height: 390 }, hasTouch: true, isMobile: true },
+  ]);
+  assert.deepEqual(mediaProjects("tablet").map(({ name, viewport, hasTouch, isMobile }) => ({ name, viewport, hasTouch, isMobile })), [
+    { name: "tablet-portrait", viewport: { width: 768, height: 1024 }, hasTouch: true, isMobile: true },
+    { name: "tablet-landscape", viewport: { width: 1024, height: 768 }, hasTouch: true, isMobile: true },
+  ]);
+  assert.equal(mediaProjects("all").length, 5);
+});
 
 test("an occupied loopback port fails without stopping its owner", async (t) => {
   const { port } = await failingHealthServer(t);

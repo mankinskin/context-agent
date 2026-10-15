@@ -71,8 +71,11 @@ pub(super) async fn live_agent_response(
             "provider_bridge_unavailable: inspect the owned MCP lifecycle receipts".to_string(),
         )
     })?;
-    let response = executor
-        .execute(AgentRequest::new(content, 3))
+    let (response, observed) = executor
+        .execute_observed_with_endpoint(
+            AgentRequest::new(content, 3),
+            "https://api.githubcopilot.com",
+        )
         .await
         .map_err(|_| {
             tracing::error!("bounded provider execution failed");
@@ -83,10 +86,32 @@ pub(super) async fn live_agent_response(
             )
         })?;
     Ok(ConversationMessage {
+        usage: observed.usage.map(|usage| Usage {
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            ..Usage::default()
+        }),
         role: "assistant".to_string(),
         blocks: vec![RichTextBlock::Paragraph {
             text: redact_content(&response.text),
         }],
-        tool_calls: Vec::new(),
+        tool_calls: observed
+            .tool_calls
+            .into_iter()
+            .map(|call| ToolCall {
+                tool_call_id: call.id,
+                tool_name: "get_ticket".to_string(),
+                status: if call.result.is_some() {
+                    "completed"
+                } else {
+                    "incomplete"
+                }
+                .to_string(),
+                summary: call
+                    .result
+                    .map(|result| redact_content(&result.to_string()))
+                    .unwrap_or_else(|| "No result observed".to_string()),
+            })
+            .collect(),
     })
 }
