@@ -5,6 +5,7 @@ pub(super) fn SessionTab(
     session: SessionSummary,
     is_active: bool,
     on_select: EventHandler<String>,
+    depth: Option<usize>,
 ) -> Element {
     let session_id_for_button = session.session_id.clone();
     let session_number = session_id_for_button
@@ -21,6 +22,9 @@ pub(super) fn SessionTab(
             class: if is_active { "session-tab is-active" } else { "session-tab" },
             title: "{session_title}",
             aria_pressed: is_active,
+            role: if depth.is_some() { "treeitem" } else { "button" },
+            aria_level: depth.map(|level| (level + 1).to_string()),
+            padding_left: depth.map(|level| format!("{}px", 12 + level * 12)),
             onclick: move |_| {
                 on_select.call(click_id.clone());
             },

@@ -5,6 +5,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createOwnedRun as ownedRun, failure } from "./e2e-lifecycle.mjs";
 import { captureNativeBridge, snapshotSessionStores, verifyNativeBridge } from "./e2e-native.mjs";
+import { runSessionNavigation, verifySessionNavigation } from "./e2e-sessions.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -47,7 +48,7 @@ function parseArgs(argv) {
     if (!options[name]) throw failure("INVALID_ARGUMENT", `invalid: --${name.replaceAll("_", "-")} is required`);
   }
   if (!["offline", "live"].includes(options.lane)) throw failure("INVALID_ARGUMENT", `invalid lane: ${options.lane}`);
-  if (!["baseline", "bridge", "spine"].includes(options.scenario)) throw failure("UNSUPPORTED_SCENARIO", `unsupported scenario: ${options.scenario}`);
+  if (!["baseline", "bridge", "sessions", "spine"].includes(options.scenario)) throw failure("UNSUPPORTED_SCENARIO", `unsupported scenario: ${options.scenario}`);
   mediaProjects(options.media);
   if (options.lane === "live" && options.media === "all") throw failure("INVALID_MEDIA", "live requires one origin media project");
   if (options.lane === "live" && options.scenario !== "spine") throw failure("UNSUPPORTED_SCENARIO", "live requires scenario: spine");
@@ -134,7 +135,7 @@ async function verifyArtifacts(root) {
     const events = (await readFile(join(runRoot, "events.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
     const requireEvidence = (condition, message) => { if (!condition) throw failure("ARTIFACT_INVALID", message); };
     requireEvidence(manifest.outcome === "passed" && manifest.run_id === basename(runRoot), "failed or mismatched run identity");
-    requireEvidence(["baseline", "bridge"].includes(manifest.scenario) && manifest.lane === "offline", "missing lane/scenario");
+    requireEvidence(["baseline", "bridge", "sessions"].includes(manifest.scenario) && manifest.lane === "offline", "missing lane/scenario");
     requireEvidence(manifest.browser?.base_url === manifest.base_url && /^http:\/\/127\.0\.0\.1:\d+$/.test(manifest.base_url), "missing URL identity");
     requireEvidence(manifest.owned_pid === manifest.executable_identity?.pid && manifest.owned_pid > 0, "missing executable PID identity");
     requireEvidence(manifest.executable_identity?.sha256?.length === 64 && manifest.static_identity?.length === 64, "missing build identity");
@@ -142,7 +143,7 @@ async function verifyArtifacts(root) {
     requireEvidence(manifest.tool_versions?.playwright && manifest.tool_versions?.chromium, "missing browser versions");
     requireEvidence(manifest.fixture_proof?.marker === "workflow-proof-29ad8d96", "missing fixture read-back");
     requireEvidence(manifest.scenario_elapsed_ms <= 60_000 && manifest.readiness_elapsed_ms <= 30_000, "deadline exceeded");
-    requireEvidence(Array.isArray(assertions) && assertions.length === (manifest.scenario === "bridge" ? 5 : 4) && assertions.every((item) => item.passed === true)
+    requireEvidence(Array.isArray(assertions) && assertions.length === (["bridge", "sessions"].includes(manifest.scenario) ? 5 : 4) && assertions.every((item) => item.passed === true)
       && ["RUN-01", "RUN-02", "RUN-03", "RUN-04"].every((id) => assertions.some((item) => item.criterion === id)), "missing passing criterion evidence");
     requireEvidence(cleanup.exit_join_result === "joined" && cleanup.remaining_resource_count === 0 && cleanup.fixture_absent === true
       && cleanup.owned_resources.some((entry) => entry.pid === manifest.owned_pid && entry.closed && entry.absent), "missing observed backend cleanup");
@@ -158,6 +159,7 @@ async function verifyArtifacts(root) {
     requireEvidence(browserResult.stats.expected === 1 && browserResult.stats.unexpected === 0
       && browserResult.stats.skipped === 0 && browserResult.stats.flaky === 0, "browser assertions did not complete");
     const screenshots = manifest.scenario === "bridge" ? ["bridge-before.png", "bridge-after.png"]
+      : manifest.scenario === "sessions" ? ["sessions-before.png", "sessions-after.png"]
       : manifest.media ? ["baseline-responsive.png"] : ["baseline-desktop.png", "baseline-narrow.png"];
     if (manifest.media) {
       requireEvidence(browserResult.config.projects.length === 1
@@ -169,6 +171,10 @@ async function verifyArtifacts(root) {
     requireEvidence(manifest.browser.artifacts.some((item) => item.path.endsWith("trace.zip"))
       && screenshots.every((name) => manifest.browser.artifacts.some((item) => item.path.endsWith(name))), "missing browser evidence");
     const nativeFiles = [];
+    if (manifest.scenario === "sessions") {
+      requireEvidence(assertions.some(item => item.criterion === "APP-03"), "missing session navigation criterion");
+      nativeFiles.push(...await verifySessionNavigation(runRoot, manifest, cleanup, events));
+    }
     if (manifest.scenario === "bridge") {
       requireEvidence(assertions.some((item) => item.criterion === "APP-01"), "missing native bridge criterion");
       const bridge = manifest.bridge;
@@ -225,7 +231,7 @@ async function runBaseline(options) {
     run.manifest.dirty_diff_sha256 = hash(diff.stdout + JSON.stringify(await artifacts(join(repositoryRoot, "scripts"))));
     const productiveRoots = [join(repositoryRoot, ".session"), join(repositoryRoot, "..", ".workflow-tools", "session", "sessions")];
     const excludedSessionId = "29ad8d96-9400-4627-a032-e02a3d8bd971";
-    const productiveBefore = options.scenario === "bridge"
+    const productiveBefore = ["bridge", "sessions"].includes(options.scenario)
       ? await snapshotSessionStores(productiveRoots, excludedSessionId, "context-agent") : null;
     await provisionFixtures(run);
     const frontendBuild = await run.spawn("trunk", ["build", "--release"], { cwd: join(repositoryRoot, "frontend"), role: "frontend-build" });
@@ -271,26 +277,38 @@ async function runBaseline(options) {
       if (asset.sha256 !== asset.served_sha256 || server.record.closed) throw failure("BUILD_MISMATCH", "served asset or owned server differs");
     }
     await run.event({ kind: "server_ready", pid: server.record.pid, base_url: baseUrl });
-    const runBrowser = (phase) => run.spawn(process.execPath, [cli, "test", options.scenario === "bridge" ? "bridge.spec.ts" : "baseline.spec.ts", "--config", "playwright.config.ts", "--reporter=list,json", "--output", join(run.runRoot, phase === "before" ? "browser-before" : "browser")], {
-      cwd: join(repositoryRoot, "frontend", "e2e"), env: { BASE_URL: baseUrl, E2E_MEDIA: JSON.stringify(options.project), BRIDGE_PHASE: phase, PLAYWRIGHT_JSON_OUTPUT_FILE: join(run.runRoot, phase === "before" ? "browser-before-result.json" : "browser-result.json") }, timeoutMs: remaining(), role: `browser-${phase}`,
+    const restartScenario = ["bridge", "sessions"].includes(options.scenario);
+    const runBrowser = (phase) => run.spawn(process.execPath, [cli, "test", options.scenario === "bridge" ? "bridge.spec.ts" : options.scenario === "sessions" ? "sessions.spec.ts" : "baseline.spec.ts", "--config", "playwright.config.ts", "--reporter=list,json", "--output", join(run.runRoot, phase === "before" ? "browser-before" : "browser")], {
+      cwd: join(repositoryRoot, "frontend", "e2e"), env: { BASE_URL: baseUrl, E2E_MEDIA: JSON.stringify(options.project), BRIDGE_PHASE: phase, SESSIONS_CONTROL_ROOT: run.runRoot, PLAYWRIGHT_JSON_OUTPUT_FILE: join(run.runRoot, phase === "before" ? "browser-before-result.json" : "browser-result.json") }, timeoutMs: remaining(), role: `browser-${phase}`,
     });
-    if (options.scenario === "bridge") {
-      await runBrowser("before");
-      const before = await captureNativeBridge(nativeStore, run.runRoot, "before");
+    const restart = async () => {
       await server.stop();
       await server.completed;
       if (!server.record.closed || !server.record.absent) throw failure("RESTART_NOT_JOINED", "original backend did not exit");
       await ensurePortAvailable(port);
       const restarted = startBackend();
       await waitForReady(baseUrl, { timeoutMs: Math.min(30_000, remaining()), processHandle: restarted });
-      run.manifest.bridge = { before_pid: server.record.pid, after_pid: restarted.record.pid, store_root: nativeStore, before };
       await run.event({ kind: "backend_restarted", before_pid: server.record.pid, after_pid: restarted.record.pid });
+      return restarted;
+    };
+    let browser;
+    if (options.scenario === "sessions") {
+      browser = await runSessionNavigation({ run, runBrowser, server, restart, nativeStore, remaining });
+    } else {
+      if (restartScenario) {
+        await runBrowser("before");
+        const before = await captureNativeBridge(nativeStore, run.runRoot, "before");
+        const restarted = await restart();
+        run.manifest.bridge = { before_pid: server.record.pid, after_pid: restarted.record.pid, store_root: nativeStore, before };
+      }
+      browser = await runBrowser(restartScenario ? "after" : "baseline");
     }
-    const browser = await runBrowser(options.scenario === "bridge" ? "after" : "baseline");
     run.manifest.browser = { pid: browser.pid, base_url: baseUrl, artifacts: await artifacts(join(run.runRoot, "browser")) };
-    if (options.scenario === "bridge") {
-      run.manifest.browser.artifacts.push(...await artifacts(join(run.runRoot, "browser-before")));
-      run.manifest.bridge.after = await captureNativeBridge(nativeStore, run.runRoot, "after");
+    if (restartScenario) {
+      if (options.scenario === "bridge") {
+        run.manifest.browser.artifacts.push(...await artifacts(join(run.runRoot, "browser-before")));
+        run.manifest.bridge.after = await captureNativeBridge(nativeStore, run.runRoot, "after");
+      }
       const after = await snapshotSessionStores(productiveRoots, excludedSessionId, "context-agent");
       await writeFile(join(run.runRoot, "productive-session-stores.json"), `${JSON.stringify({
         excluded_session_id: excludedSessionId, source_filter: "context-agent", before: productiveBefore, after,
@@ -321,6 +339,7 @@ async function runBaseline(options) {
     { criterion: "RUN-04", artifact_path: "manifest.json", expected: "unchanged ledger", observed: run.manifest.ledger_after_sha256, passed: true },
   ];
   if (!error && options.scenario === "bridge") assertions.push({ criterion: "APP-01", artifact_path: "native-after/transcript.json", expected: "four genuine ordered native events retained after restart", observed: run.manifest.bridge.after.observed, passed: true });
+  if (!error && options.scenario === "sessions") assertions.push({ criterion: "APP-03", artifact_path: "native-after", expected: "four ordered parent-linked sessions retained after restart", observed: run.manifest.bridge.after, passed: true });
   await writeFile(join(run.runRoot, "assertions.json"), `${JSON.stringify(assertions, null, 2)}\n`);
   await run.event({ kind: "run_finished", outcome: run.manifest.outcome, code: error?.code ?? null, ...run.manifest.ledger_counts, provider_sends_delta: run.manifest.provider_sends_delta });
   await run.persistManifest();
@@ -339,7 +358,7 @@ async function main() {
   try {
     const options = parseArgs(process.argv.slice(2));
     if (options.help) {
-      console.log("Usage: --lane offline|live --scenario baseline|bridge|spine --media all|desktop|mobile|tablet --artifact-root <path> --budget-ledger <path>\n--verify-artifacts <run-path> reads prior evidence only; --help\nMedia defaults to desktop for existing callers. Offline all runs five isolated cases sequentially; live rejects all, submits once at origin then inspects retained results without submission.");
+      console.log("Usage: --lane offline|live --scenario baseline|bridge|sessions|spine --media all|desktop|mobile|tablet --artifact-root <path> --budget-ledger <path>\n--verify-artifacts <run-path> reads prior evidence only; --help\nMedia defaults to desktop for existing callers. Offline all runs five isolated cases sequentially; live rejects all, submits once at origin then inspects retained results without submission.");
     } else if (options.verify_artifacts) {
       await verifyArtifacts(options.verify_artifacts);
       console.log("artifact verification passed");

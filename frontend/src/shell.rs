@@ -26,3 +26,16 @@ pub(super) fn remove_focus_guard() {
         "window.removeEventListener('resize', window.contextAgentFocusGuard); delete window.contextAgentFocusGuard;",
     );
 }
+
+pub(super) fn selected_session() -> Option<String> {
+    web_sys::window()
+        .and_then(|window| window.location().hash().ok())
+        .and_then(|hash| hash.strip_prefix("#session=").map(str::to_owned))
+        .filter(|id| !id.is_empty())
+}
+
+pub(super) fn remember_session(id: &str) {
+    if let Some(window) = web_sys::window() {
+        let _ = window.location().set_hash(&format!("session={id}"));
+    }
+}

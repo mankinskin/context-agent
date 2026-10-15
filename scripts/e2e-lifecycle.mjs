@@ -41,7 +41,7 @@ async function stopTree(pid) {
     catch (error) { if (error.code !== "ESRCH") throw error; }
     return [pid];
   }
-  const command = `$ErrorActionPreference='Stop'; $all=@(Get-CimInstance Win32_Process); $ids=[System.Collections.Generic.List[int]]::new(); function StopOwned([int]$id) { foreach($p in $all) { if($p.ParentProcessId -eq $id) { StopOwned $p.ProcessId } }; $ids.Add($id); $p=Get-Process -Id $id -ErrorAction SilentlyContinue; if($p) { Stop-Process -Id $id -Force } }; StopOwned ${pid}; foreach($id in $ids) { if(Get-Process -Id $id -ErrorAction SilentlyContinue) { throw "owned PID $id still alive" } }; ConvertTo-Json -Compress -InputObject @($ids.ToArray())`;
+  const command = `$ErrorActionPreference='Stop'; $all=@(Get-CimInstance Win32_Process); $ids=[System.Collections.Generic.List[int]]::new(); function StopOwned([int]$id) { foreach($p in $all) { if($p.ParentProcessId -eq $id) { StopOwned $p.ProcessId } }; $ids.Add($id); $p=Get-Process -Id $id -ErrorAction SilentlyContinue; if($p) { Stop-Process -Id $id -Force } }; StopOwned ${pid}; $deadline=[DateTime]::UtcNow.AddSeconds(2); do { $live=@($ids | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue }); if($live.Count) { Start-Sleep -Milliseconds 20 } } while($live.Count -and [DateTime]::UtcNow -lt $deadline); if($live.Count) { throw "owned PIDs $live still alive" }; ConvertTo-Json -Compress -InputObject @($ids.ToArray())`;
   const killer = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], {
     env: safeEnvironment(), windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
   });

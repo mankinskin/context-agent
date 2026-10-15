@@ -14,40 +14,52 @@ fn App() -> Element {
     let mut panel = use_signal(|| "conversation");
     use_effect(shell::install_focus_guard);
     use_drop(shell::remove_focus_guard);
-    let session_id = use_signal(|| None::<String>);
+    let session_id = use_signal(shell::selected_session);
     let sessions = use_signal(Vec::<SessionSummary>::new);
     let timeline = use_signal(|| None::<Result<TimelineResponse, String>>);
     let credits = use_signal(|| None::<Result<CreditUsage, String>>);
     let lifecycle_status = use_signal(|| None::<Result<String, String>>);
     let action_session_id = session_id;
-    let mut action_result = timeline;
+    let action_result = timeline;
     let session_list = sessions;
+    let tree = use_memo(move || navigation::tree(&sessions.read()));
+    use_future(move || navigation::refresh(session_list, action_session_id, action_result));
 
-    let refresh_sessions = move |_| {
-        let mut session_list = session_list;
-        let mut active_session = action_session_id;
-        async move {
-            match list_sessions().await {
-                Ok(list) => {
-                    let selected = active_session()
-                        .or_else(|| list.first().map(|entry| entry.session_id.clone()));
-                    if let Some(id) = selected.clone() {
-                        active_session.set(Some(id.clone()));
-                    }
-                    session_list.set(list);
-                }
-                Err(err) => action_result.set(Some(Err(err))),
-            }
-        }
-    };
+    let refresh_sessions =
+        move |_| navigation::refresh(session_list, action_session_id, action_result);
 
     let create_new_session = move |_| {
         let mut session_list = session_list;
         let mut active_session = action_session_id;
         let mut timeline_result = action_result;
         async move {
-            match create_session().await {
+            match create_session(None).await {
                 Ok(id) => {
+                    shell::remember_session(&id);
+                    active_session.set(Some(id.clone()));
+                    timeline_result.set(None);
+                    match list_sessions().await {
+                        Ok(list) => session_list.set(list),
+                        Err(error) => timeline_result.set(Some(Err(error))),
+                    }
+                }
+                Err(error) => timeline_result.set(Some(Err(error))),
+            }
+        }
+    };
+
+    let create_child_session = move |_| {
+        let mut session_list = session_list;
+        let mut active_session = action_session_id;
+        let mut timeline_result = action_result;
+        async move {
+            let Some(parent) = active_session() else {
+                timeline_result.set(Some(Err("select a parent session first".to_string())));
+                return;
+            };
+            match create_session(Some(parent)).await {
+                Ok(id) => {
+                    shell::remember_session(&id);
                     active_session.set(Some(id.clone()));
                     timeline_result.set(None);
                     match list_sessions().await {
@@ -67,8 +79,9 @@ fn App() -> Element {
         async move {
             let current_session = match session() {
                 Some(id) => id,
-                None => match create_session().await {
+                None => match create_session(None).await {
                     Ok(id) => {
+                        shell::remember_session(&id);
                         session.set(Some(id.clone()));
                         id
                     }
@@ -115,20 +128,27 @@ fn App() -> Element {
                         span { "SESSIONS" }
                         button { class: "panel-toggle", aria_label: "Close sessions", onclick: move |_| { panel.set("conversation"); shell::focus_composer(); }, "Close" }
                         button { class: "icon-button", aria_label: "New session", title: "New session", onclick: create_new_session, "+" }
+                        button { class: "icon-button", aria_label: "New child session", title: "New child session", onclick: create_child_session, "↳" }
                     }
-                    div { class: "session-list",
-                        for session in sessions.read().iter().cloned() {
+                    div { class: "session-list", role: "tree", aria_label: "Sessions",
+                        for (session, depth) in tree.read().iter().cloned() {
                             SessionTab {
                                 session: session.clone(),
+                                depth: Some(depth),
                                 is_active: action_session_id() == Some(session.session_id.clone()),
                                 on_select: move |session_id: String| {
                                     let mut selected = action_session_id;
                                     let mut result = action_result;
                                     async move {
+                                        shell::remember_session(&session_id);
                                         selected.set(Some(session_id.clone()));
-                                        result.set(Some(load_timeline(&session_id).await));
+                                        result.set(None);
                                         panel.set("conversation");
                                         shell::focus_composer();
+                                        let loaded = load_timeline(&session_id).await;
+                                        if selected().as_deref() == Some(session_id.as_str()) {
+                                            result.set(Some(loaded));
+                                        }
                                     }
                                 },
                             }
@@ -151,8 +171,13 @@ fn App() -> Element {
                                         let mut selected = action_session_id;
                                         let mut result = action_result;
                                         async move {
+                                            shell::remember_session(&session_id);
                                             selected.set(Some(session_id.clone()));
-                                            result.set(Some(load_timeline(&session_id).await));
+                                            result.set(None);
+                                            let loaded = load_timeline(&session_id).await;
+                                            if selected().as_deref() == Some(session_id.as_str()) {
+                                                result.set(Some(loaded));
+                                            }
                                         }
                                     },
                                 }
@@ -293,4 +318,5 @@ mod client;
 use client::*;
 mod conversation;
 use conversation::*;
+mod navigation;
 mod shell;

@@ -19,6 +19,35 @@ test("native bridge rejects baseline-only evidence without durable failure turns
     { code: "ERR_ASSERTION" });
 });
 
+test("session tree evidence requires exact UI parents and genuine ordered branch events", async () => {
+  const { verifyNativeSessionTree } = await import("./e2e-native.mjs");
+  const expected = { rootA: "a", childA: "c", grandchildA: "g", rootB: "b", selected: "g" };
+  const records = [["a", null], ["c", "a"], ["g", "c"], ["b", null]].map(([id, parent]) => ({
+    manifest: { session_id: id, parent_session_id: parent, source: "context-agent" },
+    transcript: { session_id: id, turns: id === "g" ? ["chat_message", "prompt_assembly", "model_request", "failure"].map((kind, index) => {
+      const event = { event_id: `event-${index}`, session_id: id, sequence: index, evidence_kind: kind,
+        source_id: index === 3 ? "offline_ai_unavailable" : "fixture",
+        message: index === 0 ? { blocks: [{ text: "offline nested branch proof" }] } : null };
+      return { sequence: index, content: JSON.stringify(event),
+        event_meta: { event_id: event.event_id, parent_event_id: index ? `event-${index - 1}` : null } };
+    }) : [] },
+  }));
+  assert.equal(verifyNativeSessionTree(records, expected).find(row => row.session_id === "g").turn_count, 4);
+  const omittedEmptyTurns = structuredClone(records);
+  omittedEmptyTurns[0].transcript.schema_version = 1;
+  delete omittedEmptyTurns[0].transcript.turns;
+  assert.equal(verifyNativeSessionTree(omittedEmptyTurns, expected).find(row => row.session_id === "a").turn_count, 0);
+  const wrongParent = structuredClone(records);
+  wrongParent[1].manifest.parent_session_id = "b";
+  assert.throws(() => verifyNativeSessionTree(wrongParent, expected));
+  const missingEvents = structuredClone(records);
+  missingEvents[2].transcript.turns = [];
+  assert.throws(() => verifyNativeSessionTree(missingEvents, expected));
+  const wrongOrder = structuredClone(records);
+  wrongOrder[2].transcript.turns.reverse();
+  assert.throws(() => verifyNativeSessionTree(wrongOrder, expected));
+});
+
 test("productive store fingerprints detect changed files and document absent roots", async (t) => {
   const root = await fixture(t);
   const { snapshotSessionStores } = await import("./e2e-native.mjs");
@@ -78,6 +107,7 @@ test("help exposes the owned-runner interface without starting services", () => 
   assert.equal(result.status, 0);
   assert.match(result.stdout, /--lane/);
   assert.match(result.stdout, /--scenario/);
+  assert.match(result.stdout, /sessions/);
   assert.match(result.stdout, /--artifact-root/);
   assert.match(result.stdout, /--budget-ledger/);
   assert.match(result.stdout, /--media all\|desktop\|mobile\|tablet/);

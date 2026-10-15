@@ -12,9 +12,13 @@ export async function primaryAction(control: Locator, info: TestInfo) {
   }
 }
 
-export async function openSessions(page: Page) {
+export async function openSessions(page: Page, info?: TestInfo) {
   if ((page.viewportSize()?.width ?? 1440) <= 900) {
-    await page.getByRole("button", { name: "Show sessions" }).click();
+    const toggle = page.getByRole("button", { name: "Show sessions" });
+    if (await toggle.getAttribute("aria-expanded") !== "true") {
+      if (info) await primaryAction(toggle, info);
+      else await toggle.click();
+    }
   }
 }
 

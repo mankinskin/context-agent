@@ -79,7 +79,66 @@ export async function captureNativeBridge(store, runRoot, phase) {
     const bytes = await readFile(path);
     files.push({ path, source_path: join(source, name), sha256: createHash("sha256").update(bytes).digest("hex") });
   }
+
   const manifest = JSON.parse(await readFile(files[0].path, "utf8"));
   const transcript = JSON.parse(await readFile(files[1].path, "utf8"));
   return { files, observed: verifyNativeBridge(manifest, transcript, store) };
+}
+
+export function verifyNativeSessionTree(records, expected) {
+  const parents = new Map([[expected.rootA, null], [expected.childA, expected.rootA],
+    [expected.grandchildA, expected.childA], [expected.rootB, null]]);
+  assert.equal(parents.size, 4, "four distinct UI-created sessions required");
+  assert.equal(records.length, 4);
+  assert.equal(expected.selected, expected.grandchildA);
+  const observed = records.map(({ manifest, transcript }) => {
+    assert.ok(parents.has(manifest.session_id));
+    assert.equal(manifest.source, "context-agent");
+    assert.equal(manifest.parent_session_id ?? null, parents.get(manifest.session_id));
+    assert.equal(transcript.session_id, manifest.session_id);
+    // Native schema v1 omits `turns` on an empty, newly created session.
+    if (transcript.turns === undefined) assert.equal(transcript.schema_version, 1);
+    const turns = transcript.turns ?? [];
+    const eventIds = turns.map((turn, index) => {
+      const event = JSON.parse(turn.content);
+      assert.equal(turn.sequence, index);
+      assert.equal(event.sequence, index);
+      assert.equal(event.session_id, manifest.session_id);
+      assert.equal(turn.event_meta.event_id, event.event_id);
+      assert.equal(turn.event_meta.parent_event_id ?? null, index ? turns[index - 1].event_meta.event_id : null);
+      return event.event_id;
+    });
+    assert.equal(new Set(eventIds).size, eventIds.length);
+    if (manifest.session_id === expected.grandchildA) {
+      const events = turns.map(turn => JSON.parse(turn.content));
+      assert.deepEqual(events.map(event => event.evidence_kind), ["chat_message", "prompt_assembly", "model_request", "failure"]);
+      assert.equal(events[0].message.blocks[0].text, "offline nested branch proof");
+      assert.match(events[3].source_id, /offline_ai_unavailable/);
+    } else assert.equal(eventIds.length, 0);
+    return { session_id: manifest.session_id, parent_session_id: manifest.parent_session_id ?? null,
+      event_ids: eventIds, turn_count: turns.length };
+  });
+  assert.equal(new Set(observed.map(record => record.session_id)).size, 4);
+  return observed.sort((left, right) => left.session_id.localeCompare(right.session_id));
+}
+
+export async function captureNativeSessionTree(store, runRoot, phase, expected) {
+  const sessions = (await readdir(join(store, "sessions"), { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+  assert.equal(sessions.length, 4, "the UI must create four native sessions");
+  const destination = join(runRoot, `native-${phase}`);
+  await mkdir(destination);
+  const records = [], files = [];
+  for (const id of sessions) {
+    const source = join(store, "sessions", id);
+    const manifest = JSON.parse(await readFile(join(source, "session.json"), "utf8"));
+    const transcript = JSON.parse(await readFile(join(source, "transcript.json"), "utf8"));
+    records.push({ manifest, transcript });
+    for (const name of ["session.json", "transcript.json"]) {
+      const path = join(destination, `${id}-${name}`);
+      await copyFile(join(source, name), path);
+      files.push({ path, sha256: createHash("sha256").update(await readFile(path)).digest("hex") });
+    }
+  }
+  return { files, observed: verifyNativeSessionTree(records, expected) };
 }

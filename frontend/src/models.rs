@@ -4,6 +4,7 @@ use super::*;
 pub(super) struct CreateSessionRequest {
     pub(super) mode: String,
     pub(super) worktree_id: String,
+    pub(super) parent_session_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -16,6 +17,7 @@ pub(super) struct SessionSummary {
     pub(super) session_id: String,
     pub(super) state: String,
     pub(super) worktree_id: String,
+    pub(super) parent_session_id: Option<String>,
     pub(super) event_count: usize,
     pub(super) latest_message: Option<String>,
 }

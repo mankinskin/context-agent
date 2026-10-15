@@ -44,10 +44,11 @@ pub(super) async fn list_sessions() -> Result<Vec<SessionSummary>, String> {
     request_json("GET", "/api/sessions", None).await
 }
 
-pub(super) async fn create_session() -> Result<String, String> {
+pub(super) async fn create_session(parent_session_id: Option<String>) -> Result<String, String> {
     let body = serde_json::to_string(&CreateSessionRequest {
         mode: "chat".to_string(),
         worktree_id: "browser-default".to_string(),
+        parent_session_id,
     })
     .map_err(|e| e.to_string())?;
     Ok(
