@@ -104,3 +104,32 @@ configuration, disables external diff/textconv/fsmonitor/pagers, limits each
 command to 3 seconds, root output to 8192 bytes and diff output to 262144
 bytes. Failure returns structured, correlated diagnostics. The editor is
 disabled unless the operator explicitly configures the owned repository root.
+
+## Final-build and container selectors
+
+`--lane container --scenario baseline --media all` builds the current local
+Dockerfile and dependency graph unchanged. The runner uses an existing local
+`infrastructure-base:local` (or `E2E_BASE_IMAGE`), unique labelled image/container
+names and an ephemeral IPv4 loopback port. No SSH agent is forwarded by default.
+For the approved Windows OpenSSH agent, explicitly set
+`$env:E2E_SSH_AUTH_SOCK = '\\.\pipe\openssh-ssh-agent'` before the container
+command. The socket is forwarded only to Docker build via `--ssh`; private key
+contents are never read or supplied as a secret, and runtime containers receive
+no agent or provider credential. The manifest records whether forwarding was
+enabled. Trust the Dockerfile before exposing the agent signing capability.
+If the working dependency graph requires SSH access without that opt-in,
+the build fails visibly; the runner never rewrites the manifests or substitutes
+a previously built image. Actual health/session responses, UI session IDs,
+served static hashes, copied image executable, image identity, stopped-container
+exit and absent owned resources are read back separately. The legacy
+`scripts/smoke-container.sh` checks only HTTP health/root/session contracts,
+not responsive browser acceptance; Context Agent has no template echo contract.
+
+`--lane live --scenario all --media tablet` runs the existing spine then
+choice-MCP scenarios sequentially, each with a separate 120-second inclusive
+deadline, one tablet-portrait submitting origin and four retained no-submit
+contexts. A failed spine terminates the sequence. `--media all` remains
+forbidden for live execution; the selector never resets or retries the shared
+ledger. This final paid gate is deferred while required container coverage
+is blocked. `--verify-artifacts <run-id-directory>` is exclusive; mixing
+execution selectors is rejected before any resource or provider starts.

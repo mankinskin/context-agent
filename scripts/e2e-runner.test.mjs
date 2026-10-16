@@ -11,6 +11,15 @@ import { test } from "node:test";
 const runnerPath = fileURLToPath(new URL("./e2e-runner.mjs", import.meta.url));
 const runner = () => import("./e2e-runner.mjs");
 
+test("final live-all accepts one tablet origin without executing providers", async () => {
+  const { parseArgs } = await runner();
+  const args = ["--lane", "live", "--scenario", "all", "--media", "tablet",
+    "--artifact-root", "unit-artifacts", "--budget-ledger", "unit-ledger"];
+  assert.equal(parseArgs(args).scenario, "all");
+  assert.throws(() => parseArgs(args.map(value => value === "tablet" ? "all" : value)), { code: "INVALID_MEDIA" });
+  assert.throws(() => parseArgs(args.map(value => value === "live" ? "container" : value)), { code: "UNSUPPORTED_SCENARIO" });
+});
+
 test("native bridge rejects baseline-only evidence without durable failure turns", async () => {
   const { verifyNativeBridge } = await import("./e2e-native.mjs");
   const manifest = { source: "context-agent", session_id: "synthetic-session", started_at: "2026-10-14T00:00:00Z",
@@ -113,6 +122,15 @@ test("help exposes the owned-runner interface without starting services", () => 
   assert.match(result.stdout, /--budget-ledger/);
   assert.match(result.stdout, /--media all\|desktop\|mobile\|tablet/);
   assert.match(result.stdout, /--verify-artifacts/);
+  assert.match(result.stdout, /offline\|container\|live/);
+});
+
+test("read-only artifact verification rejects execution selectors rather than ignoring them", () => {
+  const result = spawnSync(process.execPath, [runnerPath, "--verify-artifacts", "missing",
+    "--lane", "live", "--scenario", "all"], { encoding: "utf8", timeout: 3000 });
+  assert.ifError(result.error);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /INVALID_ARGUMENT/);
 });
 
 test("offline choice evidence requires actual enabled config and failure without fabricated widgets", async t => {

@@ -8,55 +8,13 @@ import { captureNativeBridge, snapshotSessionStores, verifyNativeBridge } from "
 import { runSessionNavigation, verifySessionNavigation } from "./e2e-sessions.mjs";
 import { captureChoice, verifyChoice } from "./e2e-choice.mjs";
 import { captureEditor, provisionEditor, verifyEditor } from "./e2e-editor.mjs";
+import { mediaProjects, parseArgs } from "./e2e-options.mjs";
+export { mediaProjects, parseArgs };
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 export const fileHash = async (path) => hash(await readFile(path));
 export const createOwnedRun = (options) => ownedRun({ cwd: repositoryRoot, ...options });
-
-const mediaMatrix = [
-  { name: "desktop", viewport: { width: 1440, height: 900 }, isMobile: false, hasTouch: false, input: "mouse-keyboard", orientation: "landscape" },
-  { name: "mobile-portrait", viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, input: "touch", orientation: "portrait" },
-  { name: "mobile-landscape", viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true, input: "touch", orientation: "landscape" },
-  { name: "tablet-portrait", viewport: { width: 768, height: 1024 }, isMobile: true, hasTouch: true, input: "touch", orientation: "portrait" },
-  { name: "tablet-landscape", viewport: { width: 1024, height: 768 }, isMobile: true, hasTouch: true, input: "touch", orientation: "landscape" },
-];
-
-export function mediaProjects(media) {
-  if (media === "all") return mediaMatrix;
-  if (media === "desktop") return [mediaMatrix[0]];
-  if (media === "mobile") return mediaMatrix.slice(1, 3);
-  if (media === "tablet") return mediaMatrix.slice(3);
-  throw failure("INVALID_MEDIA", `invalid media: ${media}`);
-}
-
-function parseArgs(argv) {
-  const options = {};
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === "--help") return { help: true };
-    if (!["--lane", "--scenario", "--media", "--artifact-root", "--budget-ledger", "--verify-artifacts"].includes(arg)) {
-      throw failure("INVALID_ARGUMENT", `unknown argument: ${arg}`);
-    }
-    const value = argv[++index];
-    if (!value || value.startsWith("--")) throw failure("INVALID_ARGUMENT", `invalid value for ${arg}`);
-    const key = arg.slice(2).replaceAll("-", "_");
-    if (key in options) throw failure("INVALID_ARGUMENT", `duplicate argument: ${arg}`);
-    options[key] = value;
-  }
-  if (options.verify_artifacts) return options;
-  options.media ??= "desktop";
-  for (const name of ["lane", "scenario", "artifact_root", "budget_ledger"]) {
-    if (!options[name]) throw failure("INVALID_ARGUMENT", `invalid: --${name.replaceAll("_", "-")} is required`);
-  }
-  if (!["offline", "live"].includes(options.lane)) throw failure("INVALID_ARGUMENT", `invalid lane: ${options.lane}`);
-  if (!["baseline", "bridge", "sessions", "editor-git", "spine", "choice", "choice-mcp", "all"].includes(options.scenario)) throw failure("UNSUPPORTED_SCENARIO", `unsupported scenario: ${options.scenario}`);
-  mediaProjects(options.media);
-  if (options.lane === "live" && options.media === "all") throw failure("INVALID_MEDIA", "live requires one origin media project");
-  if (options.lane === "live" && !["spine", "choice-mcp"].includes(options.scenario)) throw failure("UNSUPPORTED_SCENARIO", "live requires scenario: spine or choice-mcp");
-  if (options.lane === "offline" && ["spine", "choice-mcp"].includes(options.scenario)) throw failure("UNSUPPORTED_SCENARIO", "spine and choice-mcp are live-only scenarios");
-  return options;
-}
 
 export async function ensurePortAvailable(port) {
   await new Promise((resolveProbe, reject) => {
@@ -131,6 +89,7 @@ async function verifyArtifacts(root) {
   try {
     const read = async (name) => JSON.parse(await readFile(join(runRoot, name), "utf8"));
     const [manifest, assertions, cleanup] = await Promise.all(["manifest.json", "assertions.json", "cleanup.json"].map(read));
+    if (manifest.lane === "container") return (await import("./e2e-container.mjs")).verifyContainerArtifacts(runRoot);
     if (manifest.lane === "live") return (await import("./e2e-live.mjs")).verifyLiveArtifacts(runRoot);
     const events = (await readFile(join(runRoot, "events.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
     const requireEvidence = (condition, message) => { if (!condition) throw failure("ARTIFACT_INVALID", message); };
@@ -371,13 +330,17 @@ async function main() {
   try {
     const options = parseArgs(process.argv.slice(2));
     if (options.help) {
-      console.log("Usage: --lane offline|live --scenario baseline|bridge|sessions|choice|editor-git|choice-mcp|spine|all --media all|desktop|mobile|tablet --artifact-root <path> --budget-ledger <path>\n--verify-artifacts <run-path> reads prior evidence only; --help");
+      console.log("Usage: --lane offline|container|live --scenario baseline|bridge|sessions|choice|editor-git|choice-mcp|spine|all --media all|desktop|mobile|tablet --artifact-root <path> --budget-ledger <path>\n--verify-artifacts <run-path> reads prior evidence only; --help");
     } else if (options.verify_artifacts) {
       await verifyArtifacts(options.verify_artifacts);
       console.log("artifact verification passed");
     } else {
-      if (options.lane === "live") {
-        await (await import("./e2e-live.mjs")).runLive(options);
+      if (options.lane === "container") {
+        for (const media of mediaProjects(options.media)) await (await import("./e2e-container.mjs")).runContainer(options, { root: repositoryRoot, media, application: "context-agent" });
+      } else if (options.lane === "live") {
+        for (const scenario of options.scenario === "all" ? ["spine", "choice-mcp"] : [options.scenario]) {
+          await (await import("./e2e-live.mjs")).runLive({ ...options, scenario });
+        }
       } else {
         for (const scenario of options.scenario === "all" ? ["baseline", "bridge", "sessions", "choice", "editor-git"] : [options.scenario]) {
           for (const project of mediaProjects(options.media)) await runBaseline({ ...options, scenario, project });

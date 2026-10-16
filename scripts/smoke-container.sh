@@ -1,64 +1,46 @@
 #!/usr/bin/env bash
-# Builds (if needed) and runs a template container image, then exercises
-# /, /health, and /api/echo against it. Generic across any locally-tagged
-# or digest-pinned image built from this repo's Dockerfile.
-#
-# Usage: scripts/smoke-container.sh <image-tag> [port]
-#
-# Exit codes (documented so CI/callers can interpret failures precisely):
-#   0  - all checks passed
-#   10 - container failed to start
-#   11 - container did not become ready (health check timed out)
-#   12 - GET /health did not return 200
-#   13 - GET / did not return 200
-#   14 - POST /api/echo did not echo the submitted message
-set -uo pipefail
+# HTTP smoke only; the owned browser runner supplies responsive E2E evidence.
+set -euo pipefail
 
 IMAGE="${1:?usage: smoke-container.sh <image-tag> [port]}"
-PORT="${2:-18080}"
-NAME="template-smoke-$$"
-
+PORT="${2:-0}"
+NAME="context-agent-smoke-$$-${RANDOM}"
+CREATED=0
 cleanup() {
-  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  local status=$?
+  if [[ "$CREATED" == 1 ]]; then
+    if ! docker rm -f "$NAME" >/dev/null; then
+      echo "smoke-container: cleanup failed for owned container $NAME" >&2
+      status=15
+    fi
+  fi
+  exit "$status"
 }
 trap cleanup EXIT
 
-if ! docker run -d --rm -p "${PORT}:8080" --name "$NAME" "$IMAGE" >/dev/null; then
-  echo "smoke-container: FATAL: container failed to start" >&2
-  exit 10
-fi
-
-ready=0
-for _ in $(seq 1 20); do
-  if curl -fsS -o /dev/null "http://localhost:${PORT}/health" 2>/dev/null; then
-    ready=1
+docker run -d -p "127.0.0.1:${PORT}:8080" --name "$NAME" "$IMAGE" >/dev/null
+CREATED=1
+PORT="$(docker port "$NAME" 8080/tcp)"
+BASE_URL="http://${PORT}"
+READY=0
+for _ in $(seq 1 30); do
+  if [[ "$(curl --max-time 1 -fsS "$BASE_URL/health" 2>/dev/null || true)" == "ok" ]]; then
+    READY=1
     break
   fi
   sleep 0.5
 done
-if [ "$ready" -ne 1 ]; then
-  echo "smoke-container: FATAL: container did not become ready within 10s" >&2
-  docker logs "$NAME" >&2 || true
+if [[ "$READY" != 1 ]]; then
+  echo "smoke-container: health readiness deadline exceeded" >&2
+  docker logs "$NAME" >&2
   exit 11
 fi
-
-health_code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:${PORT}/health")
-if [ "$health_code" != "200" ]; then
-  echo "smoke-container: FATAL: GET /health returned $health_code, expected 200" >&2
-  exit 12
-fi
-
-root_code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:${PORT}/")
-if [ "$root_code" != "200" ]; then
-  echo "smoke-container: FATAL: GET / returned $root_code, expected 200" >&2
-  exit 13
-fi
-
-echo_body=$(curl -s -X POST -H 'content-type: application/json' \
-  -d '{"message":"smoke-test"}' "http://localhost:${PORT}/api/echo")
-if [[ "$echo_body" != *'"message":"smoke-test"'* ]]; then
-  echo "smoke-container: FATAL: POST /api/echo did not echo the submitted message (got: $echo_body)" >&2
-  exit 14
-fi
-
-echo "smoke-container: all checks passed against $IMAGE (/, /health, /api/echo)"
+curl --max-time 5 -fsS "$BASE_URL/" >/dev/null
+SESSIONS="$(curl --max-time 5 -fsS "$BASE_URL/api/sessions")"
+printf '%s' "$SESSIONS" | node -e '
+let value = "";
+process.stdin.on("data", chunk => value += chunk);
+process.stdin.on("end", () => {
+  if (!Array.isArray(JSON.parse(value))) throw new Error("sessions response must be an array");
+});'
+echo "smoke-container: HTTP contract passed (/, /health, /api/sessions); no echo endpoint or provider request"

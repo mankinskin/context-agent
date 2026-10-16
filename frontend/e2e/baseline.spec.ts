@@ -13,6 +13,15 @@ test("offline responsive session selection preserves draft and focus", async ({ 
   const first = await tabs.first().getAttribute("title");
   await primaryAction(page.getByRole("button", { name: "Create parallel session" }), info);
   await expect(tabs).toHaveCount(2);
+  await info.attach("sessions-observed", {
+    body: JSON.stringify({ session_ids: await Promise.all((await tabs.all()).map(async tab => {
+      const title = await tab.getAttribute("title");
+      const match = title?.match(/[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i);
+      expect(match).not.toBeNull();
+      return match![0];
+    })) }),
+    contentType: "application/json",
+  });
   const message = page.getByRole("textbox", { name: "Message", exact: true });
   await message.fill("responsive draft");
   await message.focus();
