@@ -21,12 +21,15 @@ use std::{
 };
 use tower_http::services::{ServeDir, ServeFile};
 
+mod editor;
+
 #[derive(Clone)]
-struct AppState {
+pub(crate) struct AppState {
     sessions: Arc<Mutex<HashMap<String, Session>>>,
     store: SessionStoreConfig,
     transaction: Arc<tokio::sync::Mutex<()>>,
     live: bool,
+    editor_root: Option<PathBuf>,
 }
 
 /// Builds the Context Agent API and same-origin static frontend service.
@@ -41,19 +44,25 @@ pub fn router(static_dir: &str) -> Router {
     let store_root = std::env::var_os("SESSION_STORE_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(".session"));
-    build_router(static_dir, store_root, true)
+    let editor_root = std::env::var_os("CONTEXT_AGENT_EDITOR_ROOT").map(PathBuf::from);
+    build_router(static_dir, store_root, true, editor_root)
 }
 
 pub fn router_with_store(static_dir: &str, store_root: PathBuf) -> Router {
-    build_router(static_dir, store_root, false)
+    build_router(static_dir, store_root, false, None)
 }
 
-fn build_router(static_dir: &str, store_root: PathBuf, live: bool) -> Router {
+pub fn router_with_editor(static_dir: &str, store_root: PathBuf, editor_root: PathBuf) -> Router {
+    build_router(static_dir, store_root, false, Some(editor_root))
+}
+
+fn build_router(static_dir: &str, store_root: PathBuf, live: bool, editor_root: Option<PathBuf>) -> Router {
     let state = AppState {
         sessions: Arc::new(Mutex::new(HashMap::new())),
         store: SessionStoreConfig::new(store_root),
         transaction: Arc::new(tokio::sync::Mutex::new(())),
         live,
+        editor_root,
     };
     let serve_dir = ServeDir::new(static_dir)
         .not_found_service(ServeFile::new(format!("{static_dir}/index.html")));
@@ -67,6 +76,8 @@ fn build_router(static_dir: &str, store_root: PathBuf, live: bool) -> Router {
         .route("/api/sessions/:session_id/evidence", post(add_evidence))
         .route("/api/sessions/:session_id/credits", get(get_credits))
         .route("/api/tools/weather/:city", get(get_weather))
+        .route("/api/editor/file", get(editor::open).put(editor::save))
+        .route("/api/editor/diff", get(editor::diff))
         .route(
             "/api/sessions/:session_id/mcp-servers/:server_id/lifecycle",
             post(lifecycle),
@@ -109,7 +120,7 @@ async fn structured_error(response: Response) -> Response {
         .join("_");
     (status, Json(serde_json::json!({
         "code": code, "status": status.as_u16(), "message": message,
-        "details": ["Use the message identity to inspect the persisted timeline; a new identity is required for a new attempt."],
+        "details": [editor::error_detail(&code).unwrap_or("Use the message identity to inspect the persisted timeline; a new identity is required for a new attempt.")],
         "correlation_id": correlation_id
     }))).into_response()
 }

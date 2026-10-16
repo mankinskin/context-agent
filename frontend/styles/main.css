@@ -218,6 +218,15 @@ button { color: inherit; }
 .composer-meta { display: flex; justify-content: space-between; max-width: 820px; margin: 6px auto 0; color: var(--text-muted); font: 400 9px/1 "IBM Plex Mono", monospace; }
 
 .inspector-section { padding: 14px 12px; border-bottom: 1px solid var(--edge-subtle); }
+.rooted-editor { min-width: 0; padding: 12px; border-bottom: 1px solid var(--edge-subtle); }
+.rooted-editor summary { min-height: 44px; cursor: pointer; font-weight: 600; }
+.rooted-editor label { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; font-size: 11px; }
+.rooted-editor input, .rooted-editor textarea { width: 100%; min-height: 44px; font: inherit; }
+.rooted-editor textarea { min-height: 132px; resize: vertical; }
+.editor-actions { display: flex; gap: 8px; margin-top: 8px; }
+.editor-actions button { min-width: 44px; min-height: 44px; border: 1px solid var(--edge-default); border-radius: 6px; background: var(--area-panel); cursor: pointer; }
+.editor-status { font-size: 11px; color: var(--signal-success); }
+.editor-diff { max-width: 100%; max-height: 200px; overflow: auto; white-space: pre; font-size: 10px; }
 .inspector-section dl { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 9px; margin: 12px 0; font-size: 10px; }
 .inspector-section dt { color: var(--text-muted); }
 .inspector-section dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }

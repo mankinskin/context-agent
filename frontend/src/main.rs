@@ -197,6 +197,7 @@ fn App() -> Element {
                         }
                     }
                     div { class: "conversation-scroll",
+                        editor::RootedEditor {}
                         preambles::PreambleEditor {}
                         div { class: "conversation-header",
                             span { class: "eyebrow", "ACTIVE THREAD" }
@@ -328,3 +329,4 @@ mod choices;
 mod navigation;
 mod preambles;
 mod shell;
+mod editor;

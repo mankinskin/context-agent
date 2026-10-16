@@ -56,8 +56,8 @@ once through its assistant response rather than duplicating native events.
 
 `--lane offline --scenario choice --media all` checks real unavailable/error
 behavior, persistence and responsive controls without fabricating an AI widget.
-`--lane offline --scenario all --media all` runs baseline, bridge, sessions and
-choice across all five projects. The successful widget contract requires the
+`--lane offline --scenario all --media all` runs baseline, bridge, sessions,
+choice and editor-git across all five projects. The successful widget contract requires the
 separately authorized paid flow:
 
 ```powershell
@@ -73,3 +73,34 @@ served build hashes and cleanup are read back separately. Failure remains
 failure; partial native choice/config artifacts are captured before cleanup
 where available. The cumulative 20-reservation ledger, 1024 output cap,
 120-second inclusive deadline and no-automatic-paid-retry rule still apply.
+## Rooted editor/Git proof
+
+The offline `editor-git` lane starts an owned backend with
+`CONTEXT_AGENT_EDITOR_ROOT` set only to its UUID-owned fixture. The UI uses
+`GET/PUT /api/editor/file` for `notes/demo.txt` and `GET /api/editor/diff`.
+Selectors: `Rooted file editor`, `File path`, `File content`, `Open file`,
+`Save file`, and `Git diff`. Paths outside that single bounded UTF-8 file,
+links/reparse points, `.git`, and files over 65536 bytes are rejected.
+
+Run `--lane offline --scenario editor-git --media all` with the same artifact
+root and cumulative ledger. Five ordinary UI cases exercise open/edit/save,
+real visible diff, rejection/recovery, reload and draft/focus preservation at
+the orientation and breakpoint boundaries. No message POST or provider send
+is required. Chromium emulation does not establish physical-device/iOS support.
+
+Before fixture cleanup, `scripts/e2e-editor.mjs` separately reads the saved disk
+file, independently runs Git diff/root checks, reads the external sentinel,
+and exercises traversal/foreign-root and real junction (symlink on Unix)
+rejections over HTTP. A missing link fixture blocks the run. Inspect the
+retained `editor/demo.txt`, `editor/diff.patch`, `editor/sentinel.txt` and
+`editor/readback.json`; artifact verification checks the values and hashes,
+not a passing browser label. `cleanup.json` must report joined processes,
+zero remaining resources and absent fixtures. The ledger must remain identical.
+
+Backend reads are bounded to 65537 bytes for size rejection; saves use an
+exclusive same-directory temporary file, sync and atomic replacement with
+failure cleanup. Git ignores inherited `GIT_*` overrides and global/system
+configuration, disables external diff/textconv/fsmonitor/pagers, limits each
+command to 3 seconds, root output to 8192 bytes and diff output to 262144
+bytes. Failure returns structured, correlated diagnostics. The editor is
+disabled unless the operator explicitly configures the owned repository root.

@@ -7,6 +7,7 @@ import { createOwnedRun as ownedRun, failure } from "./e2e-lifecycle.mjs";
 import { captureNativeBridge, snapshotSessionStores, verifyNativeBridge } from "./e2e-native.mjs";
 import { runSessionNavigation, verifySessionNavigation } from "./e2e-sessions.mjs";
 import { captureChoice, verifyChoice } from "./e2e-choice.mjs";
+import { captureEditor, provisionEditor, verifyEditor } from "./e2e-editor.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -49,7 +50,7 @@ function parseArgs(argv) {
     if (!options[name]) throw failure("INVALID_ARGUMENT", `invalid: --${name.replaceAll("_", "-")} is required`);
   }
   if (!["offline", "live"].includes(options.lane)) throw failure("INVALID_ARGUMENT", `invalid lane: ${options.lane}`);
-  if (!["baseline", "bridge", "sessions", "spine", "choice", "choice-mcp", "all"].includes(options.scenario)) throw failure("UNSUPPORTED_SCENARIO", `unsupported scenario: ${options.scenario}`);
+  if (!["baseline", "bridge", "sessions", "editor-git", "spine", "choice", "choice-mcp", "all"].includes(options.scenario)) throw failure("UNSUPPORTED_SCENARIO", `unsupported scenario: ${options.scenario}`);
   mediaProjects(options.media);
   if (options.lane === "live" && options.media === "all") throw failure("INVALID_MEDIA", "live requires one origin media project");
   if (options.lane === "live" && !["spine", "choice-mcp"].includes(options.scenario)) throw failure("UNSUPPORTED_SCENARIO", "live requires scenario: spine or choice-mcp");
@@ -108,10 +109,8 @@ export async function provisionFixtures(run) {
   }
   const gitRoot = join(run.fixtureRoot, "git");
   await mkdir(gitRoot);
-  await writeFile(join(gitRoot, "README.md"), "workflow-proof-29ad8d96\n");
-  await run.spawn("git", ["init"], { cwd: gitRoot, timeoutMs: 30_000 });
-  await run.spawn("git", ["add", "README.md"], { cwd: gitRoot, timeoutMs: 30_000 });
-  run.manifest.fixture_proof = { ticket_id: ticket.id, marker: "workflow-proof-29ad8d96", git_root: gitRoot };
+  await provisionEditor(run, gitRoot);
+  run.manifest.fixture_proof = { ticket_id: ticket.id, marker: "workflow-proof-29ad8d96", git_root: gitRoot, editor_file: join(gitRoot, "notes", "demo.txt"), sentinel: join(run.fixtureRoot, "editor-sentinel.txt") };
   await run.event({ kind: "fixtures_verified", ...run.manifest.fixture_proof });
 }
 
@@ -136,7 +135,7 @@ async function verifyArtifacts(root) {
     const events = (await readFile(join(runRoot, "events.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
     const requireEvidence = (condition, message) => { if (!condition) throw failure("ARTIFACT_INVALID", message); };
     requireEvidence(manifest.outcome === "passed" && manifest.run_id === basename(runRoot), "failed or mismatched run identity");
-    requireEvidence(["baseline", "bridge", "sessions", "choice"].includes(manifest.scenario) && manifest.lane === "offline", "missing lane/scenario");
+    requireEvidence(["baseline", "bridge", "sessions", "choice", "editor-git"].includes(manifest.scenario) && manifest.lane === "offline", "missing lane/scenario");
     requireEvidence(manifest.browser?.base_url === manifest.base_url && /^http:\/\/127\.0\.0\.1:\d+$/.test(manifest.base_url), "missing URL identity");
     requireEvidence(manifest.owned_pid === manifest.executable_identity?.pid && manifest.owned_pid > 0, "missing executable PID identity");
     requireEvidence(manifest.executable_identity?.sha256?.length === 64 && manifest.static_identity?.length === 64, "missing build identity");
@@ -144,7 +143,7 @@ async function verifyArtifacts(root) {
     requireEvidence(manifest.tool_versions?.playwright && manifest.tool_versions?.chromium, "missing browser versions");
     requireEvidence(manifest.fixture_proof?.marker === "workflow-proof-29ad8d96", "missing fixture read-back");
     requireEvidence(manifest.scenario_elapsed_ms <= 60_000 && manifest.readiness_elapsed_ms <= 30_000, "deadline exceeded");
-    requireEvidence(Array.isArray(assertions) && assertions.length === (["bridge", "sessions"].includes(manifest.scenario) ? 5 : 4) && assertions.every((item) => item.passed === true)
+    requireEvidence(Array.isArray(assertions) && assertions.length === (["bridge", "sessions", "editor-git"].includes(manifest.scenario) ? 5 : 4) && assertions.every((item) => item.passed === true)
       && ["RUN-01", "RUN-02", "RUN-03", "RUN-04"].every((id) => assertions.some((item) => item.criterion === id)), "missing passing criterion evidence");
     requireEvidence(cleanup.exit_join_result === "joined" && cleanup.remaining_resource_count === 0 && cleanup.fixture_absent === true
       && cleanup.owned_resources.some((entry) => entry.pid === manifest.owned_pid && entry.closed && entry.absent), "missing observed backend cleanup");
@@ -162,6 +161,7 @@ async function verifyArtifacts(root) {
     const screenshots = manifest.scenario === "bridge" ? ["bridge-before.png", "bridge-after.png"]
       : manifest.scenario === "sessions" ? ["sessions-before.png", "sessions-after.png"]
       : manifest.scenario === "choice" ? ["choice-proof.png"]
+      : manifest.scenario === "editor-git" ? ["editor-git-proof.png"]
       : manifest.media ? ["baseline-responsive.png"] : ["baseline-desktop.png", "baseline-narrow.png"];
     if (manifest.media) {
       requireEvidence(browserResult.config.projects.length === 1
@@ -173,6 +173,10 @@ async function verifyArtifacts(root) {
     requireEvidence(manifest.browser.artifacts.some((item) => item.path.endsWith("trace.zip"))
       && screenshots.every((name) => manifest.browser.artifacts.some((item) => item.path.endsWith(name))), "missing browser evidence");
     const nativeFiles = [];
+    if (manifest.scenario === "editor-git") {
+      requireEvidence(assertions.some(item => item.criterion === "APP-05"), "missing editor criterion");
+      nativeFiles.push(...await verifyEditor(runRoot, manifest));
+    }
     if (manifest.scenario === "choice") {
       requireEvidence(JSON.stringify(await verifyChoice(runRoot, false)) === JSON.stringify(manifest.choice.observed), "choice read-back differs");
       nativeFiles.push(...manifest.choice.files);
@@ -267,7 +271,7 @@ async function runBaseline(options) {
       return ms;
     };
     const nativeStore = join(run.fixtureRoot, "native-session-store");
-    const startBackend = () => run.startProcess(executable, [], { role: "backend", env: { PORT: String(port), STATIC_DIR: staticRoot, SESSION_STORE_ROOT: nativeStore }, timeoutMs: remaining() });
+    const startBackend = () => run.startProcess(executable, [], { role: "backend", env: { PORT: String(port), STATIC_DIR: staticRoot, SESSION_STORE_ROOT: nativeStore, CONTEXT_AGENT_EDITOR_ROOT: run.manifest.fixture_proof.git_root }, timeoutMs: remaining() });
     const server = startBackend();
     run.manifest.owned_pid = server.record.pid;
     run.manifest.executable_identity.pid = server.record.pid;
@@ -284,7 +288,7 @@ async function runBaseline(options) {
     }
     await run.event({ kind: "server_ready", pid: server.record.pid, base_url: baseUrl });
     const restartScenario = ["bridge", "sessions"].includes(options.scenario);
-    const runBrowser = (phase) => run.spawn(process.execPath, [cli, "test", options.scenario === "choice" ? "choice.spec.ts" : options.scenario === "bridge" ? "bridge.spec.ts" : options.scenario === "sessions" ? "sessions.spec.ts" : "baseline.spec.ts", "--config", "playwright.config.ts", "--reporter=list,json", "--output", join(run.runRoot, phase === "before" ? "browser-before" : "browser")], {
+    const runBrowser = (phase) => run.spawn(process.execPath, [cli, "test", options.scenario === "editor-git" ? "editor-git.spec.ts" : options.scenario === "choice" ? "choice.spec.ts" : options.scenario === "bridge" ? "bridge.spec.ts" : options.scenario === "sessions" ? "sessions.spec.ts" : "baseline.spec.ts", "--config", "playwright.config.ts", "--reporter=list,json", "--output", join(run.runRoot, phase === "before" ? "browser-before" : "browser")], {
       cwd: join(repositoryRoot, "frontend", "e2e"), env: { BASE_URL: baseUrl, E2E_MEDIA: JSON.stringify(options.project), BRIDGE_PHASE: phase, SESSIONS_CONTROL_ROOT: run.runRoot, PLAYWRIGHT_JSON_OUTPUT_FILE: join(run.runRoot, phase === "before" ? "browser-before-result.json" : "browser-result.json") }, timeoutMs: remaining(), role: `browser-${phase}`,
     });
     const restart = async () => {
@@ -310,6 +314,7 @@ async function runBaseline(options) {
       browser = await runBrowser(restartScenario ? "after" : "baseline");
     }
     run.manifest.browser = { pid: browser.pid, base_url: baseUrl, artifacts: await artifacts(join(run.runRoot, "browser")) };
+    if (options.scenario === "editor-git") run.manifest.editor = await captureEditor(run, baseUrl, remaining);
     if (options.scenario === "choice") run.manifest.choice = await captureChoice(nativeStore, run.runRoot);
     if (restartScenario) {
       if (options.scenario === "bridge") {
@@ -345,6 +350,7 @@ async function runBaseline(options) {
     { criterion: "RUN-03", artifact_path: "cleanup.json", expected: 0, observed: 0, passed: true },
     { criterion: "RUN-04", artifact_path: "manifest.json", expected: "unchanged ledger", observed: run.manifest.ledger_after_sha256, passed: true },
   ];
+  if (!error && options.scenario === "editor-git") assertions.push({ criterion: "APP-05", artifact_path: "editor/readback.json", expected: "actual rooted disk/diff/sentinel/junction proof", observed: run.manifest.editor.observed, passed: true });
   if (!error && options.scenario === "bridge") assertions.push({ criterion: "APP-01", artifact_path: "native-after/transcript.json", expected: "four genuine ordered native events retained after restart", observed: run.manifest.bridge.after.observed, passed: true });
   if (!error && options.scenario === "sessions") assertions.push({ criterion: "APP-03", artifact_path: "native-after", expected: "four ordered parent-linked sessions retained after restart", observed: run.manifest.bridge.after, passed: true });
   await writeFile(join(run.runRoot, "assertions.json"), `${JSON.stringify(assertions, null, 2)}\n`);
@@ -365,7 +371,7 @@ async function main() {
   try {
     const options = parseArgs(process.argv.slice(2));
     if (options.help) {
-      console.log("Usage: --lane offline|live --scenario baseline|bridge|sessions|choice|choice-mcp|spine|all --media all|desktop|mobile|tablet --artifact-root <path> --budget-ledger <path>\n--verify-artifacts <run-path> reads prior evidence only; --help\nMedia defaults to desktop. Offline scenario all runs baseline/bridge/sessions/choice in each selected media. Live submits at origin only, then inspects retained results without submission.");
+      console.log("Usage: --lane offline|live --scenario baseline|bridge|sessions|choice|editor-git|choice-mcp|spine|all --media all|desktop|mobile|tablet --artifact-root <path> --budget-ledger <path>\n--verify-artifacts <run-path> reads prior evidence only; --help");
     } else if (options.verify_artifacts) {
       await verifyArtifacts(options.verify_artifacts);
       console.log("artifact verification passed");
@@ -373,7 +379,7 @@ async function main() {
       if (options.lane === "live") {
         await (await import("./e2e-live.mjs")).runLive(options);
       } else {
-        for (const scenario of options.scenario === "all" ? ["baseline", "bridge", "sessions", "choice"] : [options.scenario]) {
+        for (const scenario of options.scenario === "all" ? ["baseline", "bridge", "sessions", "choice", "editor-git"] : [options.scenario]) {
           for (const project of mediaProjects(options.media)) await runBaseline({ ...options, scenario, project });
         }
       }
