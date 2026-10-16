@@ -107,6 +107,11 @@ disabled unless the operator explicitly configures the owned repository root.
 
 ## Final-build and container selectors
 
+The installed [E2E authoring rules](../../.agents/instructions/testing/end-to-end-testing.instructions.md)
+and [full-stack validation workflow](../../.agents/instructions/testing/fullstack-live-validation.instructions.md)
+are the agent entry points. Both are installer-managed; change canonical
+testing guidance and reinstall instead of editing generated copies.
+
 `--lane container --scenario baseline --media all` builds the current local
 Dockerfile and dependency graph unchanged. The runner uses an existing local
 `infrastructure-base:local` (or `E2E_BASE_IMAGE`), unique labelled image/container
@@ -130,6 +135,8 @@ choice-MCP scenarios sequentially, each with a separate 120-second inclusive
 deadline, one tablet-portrait submitting origin and four retained no-submit
 contexts. A failed spine terminates the sequence. `--media all` remains
 forbidden for live execution; the selector never resets or retries the shared
-ledger. This final paid gate is deferred while required container coverage
-is blocked. `--verify-artifacts <run-id-directory>` is exclusive; mixing
+ledger. W11's final tablet-origin spine and choice gates passed after the
+five-media container gate passed with explicitly approved SSH-agent forwarding.
+The cumulative ledger is 14/20; retained contexts are not fresh provider runs.
+`--verify-artifacts <run-id-directory>` is exclusive; mixing
 execution selectors is rejected before any resource or provider starts.
