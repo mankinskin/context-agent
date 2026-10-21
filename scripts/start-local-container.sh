@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Generic local-dev convenience wrapper: builds and starts this template's
-# container image, then waits for /health. Ported from file-combiner's
-# scripts/start-local-container.sh, generalized to drop file-combiner's
-# private-dependency (agent-builder SSH key) and GitHub CLI requirements,
-# which this template does not have.
+# Generic local-dev convenience wrapper: builds and starts this app's
+# container image, then waits for /health.
 IMAGE="template:local"
 CONTAINER_NAME="template-local"
 PORT="${PORT:-8081}"
@@ -28,7 +25,7 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 cd "$REPO_ROOT"
-docker build -t "$IMAGE" .
+docker build --ssh default -t "$IMAGE" .
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 docker run -d --rm --name "$CONTAINER_NAME" -p "${PORT}:8080" "$IMAGE" >/dev/null
 

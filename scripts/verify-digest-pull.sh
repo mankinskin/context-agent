@@ -37,7 +37,7 @@ if ! docker pull "$FULL_REF"; then
 fi
 
 echo "verify-digest-pull: building this repo FROM the pinned digest..."
-if ! docker build --build-arg "BASE_IMAGE=${FULL_REF}" -t "$BUILD_TAG" .; then
+if ! docker build --ssh default --build-arg "BASE_IMAGE=${FULL_REF}" -t "$BUILD_TAG" .; then
   echo "verify-digest-pull: FATAL: build failed against the pinned digest." >&2
   echo "FAILURE_BUCKET=template" >&2
   exit 21

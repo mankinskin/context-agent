@@ -14,6 +14,9 @@
 ARG BASE_IMAGE=ghcr.io/mankinskin/infrastructure-base@sha256:d0823f9fa4b323a2abdc23058b22dfdf947489e6558a1d4e0c180dcceec61247
 FROM ${BASE_IMAGE} AS chef
 WORKDIR /app
+ENV SSH_SECRET_FILE=/etc/secrets/agent_builder_ssh_key
+ENV SSH_VERIFY_REMOTE_URL=ssh://git@github.com/mankinskin/agent-builder
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 # Captures the workspace's dependency graph (Cargo.toml/Cargo.lock only, no
 # source), so this recipe only changes when a manifest or lockfile does —
@@ -27,50 +30,68 @@ RUN cargo chef prepare --recipe-path recipe.json
 # recipe alone, so a source-only change never re-triggers this step.
 FROM chef AS deps-dev
 COPY --from=planner /app/recipe.json recipe.json
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
+RUN --mount=type=ssh \
+    --mount=type=secret,id=agent_builder_ssh_key,dst=/etc/secrets/agent_builder_ssh_key \
+    --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    cargo chef cook --recipe-path recipe.json --workspace --all-targets && \
-    cargo chef cook --clippy --recipe-path recipe.json --workspace --all-targets
+    bash scripts/docker/with-git-ssh-key.sh bash -c " \
+      cargo chef cook --recipe-path recipe.json --workspace --all-targets && \
+      cargo chef cook --clippy --recipe-path recipe.json --workspace --all-targets"
 
 # Same idea, for the frontend's wasm32 target in release profile — matching
 # how `trunk build --release` actually compiles it.
 FROM deps-dev AS deps-wasm
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
+RUN --mount=type=ssh \
+    --mount=type=secret,id=agent_builder_ssh_key,dst=/etc/secrets/agent_builder_ssh_key \
+    --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    cargo chef cook --release --recipe-path recipe.json --target wasm32-unknown-unknown --package frontend
+    bash scripts/docker/with-git-ssh-key.sh \
+      cargo chef cook --release --recipe-path recipe.json --target wasm32-unknown-unknown --package frontend
 
 # Same idea again, release profile, for the production backend binary.
 FROM chef AS deps-release
 COPY --from=planner /app/recipe.json recipe.json
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
+RUN --mount=type=ssh \
+    --mount=type=secret,id=agent_builder_ssh_key,dst=/etc/secrets/agent_builder_ssh_key \
+    --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    cargo chef cook --release --recipe-path recipe.json --package backend
+    bash scripts/docker/with-git-ssh-key.sh \
+      cargo chef cook --release --recipe-path recipe.json --package backend
 
 FROM deps-release AS deps-release-wasm
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
+RUN --mount=type=ssh \
+    --mount=type=secret,id=agent_builder_ssh_key,dst=/etc/secrets/agent_builder_ssh_key \
+    --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    cargo chef cook --release --recipe-path recipe.json --target wasm32-unknown-unknown --package frontend
+    bash scripts/docker/with-git-ssh-key.sh \
+      cargo chef cook --release --recipe-path recipe.json --target wasm32-unknown-unknown --package frontend
 
 # CI target: docker build --target lint .
 FROM deps-dev AS lint
 COPY . .
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
+RUN --mount=type=ssh \
+    --mount=type=secret,id=agent_builder_ssh_key,dst=/etc/secrets/agent_builder_ssh_key \
+    --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    bash scripts/docker/lint.sh
+    bash scripts/docker/with-git-ssh-key.sh bash scripts/docker/lint.sh
 
 # CI target: docker build --target test .
 FROM deps-dev AS test
 COPY . .
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
+RUN --mount=type=ssh \
+    --mount=type=secret,id=agent_builder_ssh_key,dst=/etc/secrets/agent_builder_ssh_key \
+    --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    cargo test --workspace
+    bash scripts/docker/with-git-ssh-key.sh cargo test --workspace
 
 # Production image target: docker build -t template-local .
 FROM deps-release-wasm AS builder
 COPY . .
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
+RUN --mount=type=ssh \
+    --mount=type=secret,id=agent_builder_ssh_key,dst=/etc/secrets/agent_builder_ssh_key \
+    --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    bash scripts/docker/build-release.sh
+    bash scripts/docker/with-git-ssh-key.sh bash scripts/docker/build-release.sh
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \

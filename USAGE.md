@@ -25,6 +25,8 @@ How to turn this starter into your own app.
    ```toml
    agent-builder = { git = "ssh://git@github.com/mankinskin/agent-builder", branch = "main" }
    ```
+   Use SSH because `agent-builder` is private; an unauthenticated HTTPS fetch
+   fails with a misleading "revision not found" message.
 2. In every Dockerfile stage that runs `cargo chef cook` or otherwise
    touches that dependency, mount the forwarded SSH agent and wrap the
    command with the inherited `scripts/docker/with-git-ssh-key.sh`:
@@ -36,16 +38,20 @@ How to turn this starter into your own app.
 3. In CI (see `infrastructure`'s `templates/ci-template.yml`), load a deploy
    key via `webfactory/ssh-agent` and pass `ssh: default=${{ env.SSH_AUTH_SOCK }}`
    to every `docker/build-push-action` step.
-4. For non-agent-forwarding hosts (e.g. a Render Secret File), see
-   `with-git-ssh-key.sh`'s Secret-File path — no Dockerfile change needed,
-   only an `SSH_SECRET_FILE`-mounted deploy key at deploy time.
+4. For Render, add a Secret File named `agent_builder_ssh_key` containing the
+   deploy key. The Dockerfile mounts it as a BuildKit secret while compiling;
+   `.dockerignore` prevents the source copy from embedding that file in an
+   image layer.
 
 See `file-combiner/Dockerfile` in this workspace for the full worked
 example (multiple `deps-*` stages, `frontend-smoke` browser test, etc.).
 
 ## CI
 
-`.github/workflows/ci.yml` already runs `rust-quality` (fmt/clippy),
+Set the `AGENT_BUILDER_DEPLOY_KEY` repository secret to a deploy key with
+read access to `mankinskin/agent-builder`. `.github/workflows/ci.yml` loads
+that key for host Cargo builds and forwards its SSH agent to Docker builds.
+It runs `rust-quality` (fmt/clippy),
 `backend-contract` (`cargo test -p backend`), `frontend-browser`
 (`scripts/smoke-browser.sh`), `container-api`
 (`scripts/smoke-container.sh`), and — on push to `production` —

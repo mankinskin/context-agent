@@ -3,5 +3,5 @@ resolver = "2"
 members = ["backend", "frontend"]
 
 [workspace.dependencies]
-agent-builder = { git = "https://github.com/mankinskin/agent-builder", branch = "main" }
+agent-builder = { git = "ssh://git@github.com/mankinskin/agent-builder", branch = "main" }
 session-api = { git = "https://github.com/mankinskin/session", branch = "main" }

@@ -9,7 +9,7 @@ PORT="${PORT:-8080}"
 cd "$REPO_ROOT"
 
 echo "Building ${IMAGE}..."
-docker build -t "$IMAGE" .
+docker build --ssh default -t "$IMAGE" .
 
 echo "Starting ${CONTAINER_NAME} at http://127.0.0.1:${PORT}"
 

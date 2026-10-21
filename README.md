@@ -137,10 +137,11 @@ STATIC_DIR=frontend/dist cargo run --release -p backend
 ## Local build (Docker, default: pulls the pinned GHCR digest)
 
 Requires `docker login ghcr.io` with `read:packages` access to the private
-`infrastructure-base` package:
+`infrastructure-base` package and an SSH agent holding a deploy key with
+read access to the private `agent-builder` repository:
 
 ```sh
-docker build -t template-local .
+docker build --ssh default -t template-local .
 docker run -p 8080:8080 template-local
 # http://localhost:8080/       -> the Dioxus app
 # http://localhost:8080/health -> 200 "ok"
@@ -166,7 +167,7 @@ PORT=9090 IMAGE=my-app:local bash scripts/run-container.sh
 docker build -t infrastructure-base:local --target base .
 
 # back in this repo:
-docker build --build-arg BASE_IMAGE=infrastructure-base:local -t template-local .
+docker build --ssh default --build-arg BASE_IMAGE=infrastructure-base:local -t template-local .
 docker run -p 8080:8080 template-local
 ```
 
