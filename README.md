@@ -8,11 +8,11 @@ preambles/widgets and the rooted editor remain separate roadmap work.
 When this repo is checked out as the `context-agent` submodule inside the
 `meta-workspace` superproject, the template-modernization dossier that
 instantiated it is available at
-[../transcripts/11-09-2026_file-combiner-template-modernization/](../transcripts/11-09-2026_file-combiner-template-modernization/README.md).
+`../transcripts/11-09-2026_file-combiner-template-modernization/README.md`.
 A standalone clone of this repo does not include that dossier.
 When this repo is checked out as the `template` submodule inside the
 `meta-workspace` superproject, the split-plan design dossier is available at
-[../transcripts/28-08-2026_file-combiner-template-infrastructure/](../transcripts/28-08-2026_file-combiner-template-infrastructure/README.md).
+`../transcripts/28-08-2026_file-combiner-template-infrastructure/README.md`.
 A standalone clone of this repo does not include that dossier.
 
 ## What's here
