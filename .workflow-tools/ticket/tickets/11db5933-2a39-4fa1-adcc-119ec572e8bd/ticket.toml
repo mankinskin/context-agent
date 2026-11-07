@@ -1,0 +1,11 @@
+id = "11db5933-2a39-4fa1-adcc-119ec572e8bd"
+created_at = "2026-07-26T02:34:47.994191800+00:00"
+title = "[agent-harness][UI3] agent-uapi: render agent-driven interactions in Dioxus WASM chat UI"
+state = "planning"
+component = "meta-workspace"
+depends_on = ["b947e0d3-2f1b-4b88-b885-990367ac8563"]
+effort = "15k"
+phase = "planning"
+priority = "high"
+tags = "agent-harness,agent-uapi,dioxus,wasm,chat-ui,frontend"
+type = "tracker-improvement"

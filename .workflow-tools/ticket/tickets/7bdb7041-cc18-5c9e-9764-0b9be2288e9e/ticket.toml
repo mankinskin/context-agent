@@ -1,0 +1,7 @@
+id = "7bdb7041-cc18-5c9e-9764-0b9be2288e9e"
+created_at = "2026-10-12T04:49:22.503807+00:00"
+title = "[feedback-followup][file] Address not-helpful feedback on ce://meta-workspace/file/context-agent-readme"
+state = "planning"
+component = "file"
+priority = "medium"
+type = "tracker-improvement"

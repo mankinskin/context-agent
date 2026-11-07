@@ -5,6 +5,45 @@ Axum (backend) starter. Native persistent sessions and an owned offline
 browser/restart proof are implemented. Responsive navigation, selective
 preambles/widgets and the rooted editor remain separate roadmap work.
 
+## Repository-owned planning
+
+The existing client-facing harness tickets and interactive-UI specification
+were migrated here on 2026-11-07 through the Ticket and Spec domain move
+operations. IDs, states, dependencies and planning content were retained;
+the migration does not approve or implement those proposals.
+
+Read the local
+[autonomous-client product contract](.workflow-tools/spec/specs/73aa2bce-cf09-4319-b9c5-758599898724/body.md)
+alongside the migrated draft
+[interactive-UI contract](.workflow-tools/spec/specs/3e9d967e-68c6-4c4c-96ae-eb3f974931cf/body.md).
+The existing CA-01 through CA-07 tickets remain `done`; the following migrated
+records remain `planning`:
+
+| Slice | Ticket |
+|---|---|
+| Agent-driven interaction feature | [5bb96360](.workflow-tools/ticket/tickets/5bb96360-90e3-43d5-b03b-d568d163eeff/ticket.toml) |
+| CH7 terminal interface | [3c208991](.workflow-tools/ticket/tickets/3c208991-1d98-4a9c-be29-890d15244b8d/ticket.toml) |
+| CH8 Dioxus/WASM interface | [86f95ad8](.workflow-tools/ticket/tickets/86f95ad8-8d61-43b6-a463-8719b29007c0/ticket.toml) |
+| CH9 diff preview | [a496cad3](.workflow-tools/ticket/tickets/a496cad3-cdc5-4237-b432-47a6bb43b9c5/ticket.toml) |
+| CH11 client/browser validation | [b01a2fbf](.workflow-tools/ticket/tickets/b01a2fbf-6682-4dee-abce-95cdcf4fd325/ticket.toml) |
+| UI3 Dioxus interaction rendering | [11db5933](.workflow-tools/ticket/tickets/11db5933-2a39-4fa1-adcc-119ec572e8bd/ticket.toml) |
+| UI4 terminal interaction/degradation | [cdf1e535](.workflow-tools/ticket/tickets/cdf1e535-335a-4ffb-88ba-17fd72c05b69/ticket.toml) |
+| UI5 interaction skill | [f834173b](.workflow-tools/ticket/tickets/f834173b-8524-4702-8dea-7f865ba060c7/ticket.toml) |
+| Historical README feedback follow-up | [7bdb7041](.workflow-tools/ticket/tickets/7bdb7041-cc18-5c9e-9764-0b9be2288e9e/ticket.toml) |
+
+Host/runtime planning is owned by the independent `agent-builder` repository,
+and sandbox consumer profiles by `microvm-tools`. In a meta-workspace checkout,
+see the [host planning entry point](../agent-builder/README.md#repository-owned-planning)
+and [sandbox entry point](../microvm-tools/README.md#repository-owned-planning).
+Those sibling links require the superproject checkout.
+
+The [domain-owned UI idea dossier](../transcripts/18-10-2026_context-agent-domain-ui/README.md)
+remains unpromoted source material, not an accepted implementation plan.
+Historical dossiers remain in the superproject; their path references may be
+updated by the requester-authorized migration. Product/spec/README status
+contradictions, terminal scope and completed-work overlap are intentionally
+left for the subsequent planning review.
+
 When this repo is checked out as the `context-agent` submodule inside the
 `meta-workspace` superproject, the template-modernization dossier that
 instantiated it is available at

@@ -1,0 +1,16 @@
+id = "86f95ad8-8d61-43b6-a463-8719b29007c0"
+created_at = "2026-07-08T20:23:31.396406+00:00"
+title = "[agent-harness][CH8] Dioxus/WASM minimal interface parity"
+state = "planning"
+acceptance_criteria = "Dioxus/WASM client compiles to wasm32 and mirrors TUI control set + session semantics; consumes websocket lifecycle+output; a session started in the TUI is observable/controllable from the browser (parity)."
+component = "meta-workspace"
+depends_on = ["8ed0edbf-a765-4f4a-b50e-695aa79e9180"]
+effort = "18k"
+parts = [{ id = "494a2a28-ebbc-4f12-94b5-3effabf5ba6e", kind = "objective", path = "parts/494a2a28-ebbc-4f12-94b5-3effabf5ba6e.md", frozen = true, created_at = "2026-07-30T21:02:35.569124400Z" }, { id = "e039e6c2-bb65-42e2-9743-71e9fe5a35f1", kind = "validation", path = "parts/e039e6c2-bb65-42e2-9743-71e9fe5a35f1.md", frozen = false, created_at = "2026-07-30T21:02:35.573111900Z" }, { id = "a338e1a5-4a82-45df-8b90-bc20f70b3862", kind = "requirements", path = "parts/a338e1a5-4a82-45df-8b90-bc20f70b3862.md", frozen = true, created_at = "2026-07-30T21:02:35.578631900Z" }, { id = "3d2f3aca-a466-4f3e-baa6-8e57d9a00f18", kind = "design", path = "parts/3d2f3aca-a466-4f3e-baa6-8e57d9a00f18.md", frozen = true, created_at = "2026-07-30T21:02:35.579099500Z" }, { id = "7851554b-0e47-4698-8a33-87010eb7290e", kind = "examples", path = "parts/7851554b-0e47-4698-8a33-87010eb7290e.md", frozen = true, created_at = "2026-07-30T21:02:35.579505600Z" }, { id = "e7d0a5f1-e65d-48a7-b673-9c362867e5b8", kind = "acceptance_criteria", path = "parts/e7d0a5f1-e65d-48a7-b673-9c362867e5b8.md", frozen = true, created_at = "2026-07-30T21:02:35.579866400Z" }]
+phase = "planning"
+plan_revision = 1
+priority = "high"
+risk_level = "high"
+tags = "agent-harness,agent-web,dioxus,wasm,ui,parity"
+type = "tracker-improvement"
+validation_plan = "Fast: cargo check -p agent-web --target wasm32-unknown-unknown. Primary: cargo test (shared logic) + Playwright smoke. Manual: external Chromium browser at documented resolution + screenshots (live stream, mode toggle). Failure logs: target/test-logs/ + Playwright artifacts."

@@ -1,0 +1,7 @@
+id = "3e9d967e-68c6-4c4c-96ae-eb3f974931cf"
+created_at = "2026-07-26T02:35:56.733839600+00:00"
+title = "Agent-driven interactive chat UI (UI sandbox interaction protocol + skill)"
+state = "draft"
+component = "meta-workspace"
+slug = "agent-harness/interactive-chat-ui"
+type = "specification"

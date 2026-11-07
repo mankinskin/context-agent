@@ -1,0 +1,16 @@
+id = "3c208991-1d98-4a9c-be29-890d15244b8d"
+created_at = "2026-07-08T20:23:31.619585400+00:00"
+title = "[agent-harness][CH7] Ratatui minimal operator interface"
+state = "planning"
+acceptance_criteria = "Ratatui operator panel shows session list + live stream + mode controls; async websocket updates handled on a dedicated event loop without UI stall; minimal controls (start/toggle-loop/pause/resume/stop/inspect) operate against a running agent-server."
+component = "meta-workspace"
+depends_on = ["8ed0edbf-a765-4f4a-b50e-695aa79e9180"]
+effort = "15k"
+parts = [{ id = "c9c8bf2b-14dd-47d3-893f-5b1a95ec502d", kind = "objective", path = "parts/c9c8bf2b-14dd-47d3-893f-5b1a95ec502d.md", frozen = true, created_at = "2026-07-30T21:02:33.945941800Z" }, { id = "1695522e-6017-4433-b21c-f41292d2e152", kind = "validation", path = "parts/1695522e-6017-4433-b21c-f41292d2e152.md", frozen = false, created_at = "2026-07-30T21:02:33.949725400Z" }, { id = "3f70ec7d-4dc4-490f-931d-f362a5938607", kind = "requirements", path = "parts/3f70ec7d-4dc4-490f-931d-f362a5938607.md", frozen = true, created_at = "2026-07-30T21:02:33.955482400Z" }, { id = "8cd9e2a0-778a-405d-b4cc-2198638543ec", kind = "design", path = "parts/8cd9e2a0-778a-405d-b4cc-2198638543ec.md", frozen = true, created_at = "2026-07-30T21:02:33.955767400Z" }, { id = "cc7583bb-4011-472e-8329-6224b4a5e984", kind = "examples", path = "parts/cc7583bb-4011-472e-8329-6224b4a5e984.md", frozen = true, created_at = "2026-07-30T21:02:33.956061Z" }, { id = "0008b4d3-cd92-4f66-9dc3-606c11e9223c", kind = "acceptance_criteria", path = "parts/0008b4d3-cd92-4f66-9dc3-606c11e9223c.md", frozen = true, created_at = "2026-07-30T21:02:33.956313500Z" }]
+phase = "planning"
+plan_revision = 1
+priority = "high"
+risk_level = "medium"
+tags = "agent-harness,agent-tui,ratatui,ui"
+type = "tracker-improvement"
+validation_plan = "Fast: cargo check -p agent-tui. Primary: cargo test -p agent-tui (control->command mapping, async stream handling against mocked server). Manual: TUI smoke run vs local server, record terminal size. Failure logs: target/test-logs/."

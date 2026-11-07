@@ -1,0 +1,16 @@
+id = "a496cad3-cdc5-4237-b432-47a6bb43b9c5"
+created_at = "2026-07-08T20:23:31.471661700+00:00"
+title = "[agent-harness][CH9] Diff preview integration in both clients"
+state = "planning"
+acceptance_criteria = "similar-based diff preview integrated in both TUI and WASM with identical diff semantics for the same change set; preview shown before execution confirmation."
+component = "meta-workspace"
+depends_on = ["3c208991-1d98-4a9c-be29-890d15244b8d", "86f95ad8-8d61-43b6-a463-8719b29007c0"]
+effort = "10k"
+parts = [{ id = "5f2acd0b-854d-4ddd-9357-51ac27166959", kind = "objective", path = "parts/5f2acd0b-854d-4ddd-9357-51ac27166959.md", frozen = true, created_at = "2026-07-30T21:02:32.934198800Z" }, { id = "d9eaa87e-2e38-4f8a-aef4-6edc4e0a647a", kind = "validation", path = "parts/d9eaa87e-2e38-4f8a-aef4-6edc4e0a647a.md", frozen = false, created_at = "2026-07-30T21:02:32.938407400Z" }, { id = "2eb2b3a0-b4c7-47a9-bed5-7ee3c79f492c", kind = "requirements", path = "parts/2eb2b3a0-b4c7-47a9-bed5-7ee3c79f492c.md", frozen = true, created_at = "2026-07-30T21:02:32.945119200Z" }, { id = "60b56108-a62f-4dcc-96ce-bc10c0693082", kind = "design", path = "parts/60b56108-a62f-4dcc-96ce-bc10c0693082.md", frozen = true, created_at = "2026-07-30T21:02:32.945436200Z" }, { id = "608568e4-6282-4710-93f9-7965d87157eb", kind = "examples", path = "parts/608568e4-6282-4710-93f9-7965d87157eb.md", frozen = true, created_at = "2026-07-30T21:02:32.945834900Z" }, { id = "8585d537-a6e1-4b67-80fa-fd63000c21ca", kind = "acceptance_criteria", path = "parts/8585d537-a6e1-4b67-80fa-fd63000c21ca.md", frozen = true, created_at = "2026-07-30T21:02:32.946174100Z" }]
+phase = "planning"
+plan_revision = 1
+priority = "medium"
+risk_level = "medium"
+tags = "agent-harness,diff,similar,ui,parity"
+type = "tracker-improvement"
+validation_plan = "Fast: cargo check -p agent-tui -p agent-web. Primary: cargo test (diff model parity, same input->same hunks). Manual: Playwright screenshot of diff preview open in Chromium at documented resolution. Failure logs: target/test-logs/ + Playwright artifacts."
