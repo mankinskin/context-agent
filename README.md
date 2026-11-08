@@ -33,11 +33,12 @@ records remain `planning`:
 
 Host/runtime planning is owned by the independent `agent-builder` repository,
 and sandbox consumer profiles by `microvm-tools`. In a meta-workspace checkout,
-see the [host planning entry point](../agent-builder/README.md#repository-owned-planning)
-and [sandbox entry point](../microvm-tools/README.md#repository-owned-planning).
-Those sibling links require the superproject checkout.
+see the host planning entry point at `../agent-builder/README.md` and the
+sandbox entry point at `../microvm-tools/README.md`, both under
+"Repository-owned planning". Those sibling paths require the superproject checkout.
 
-The [domain-owned UI idea dossier](../transcripts/18-10-2026_context-agent-domain-ui/README.md)
+The domain-owned UI idea dossier at
+`../transcripts/18-10-2026_context-agent-domain-ui/README.md`
 remains unpromoted source material, not an accepted implementation plan.
 Historical dossiers remain in the superproject; their path references may be
 updated by the requester-authorized migration. Product/spec/README status
